@@ -52,24 +52,26 @@ The edge node utilizes a highly efficient multi-layered execution plan. Hardware
 
 ## ⚡ Hardware Realization & Verified Pinouts
 
-> **⚠️ CRITICAL HARDWARE SPECIFICATION:** This deployment explicitly tracks the **ESP32-S3 Supermini Pinout Layout** detailed below. The Left Rail routes the primary high-speed hardware communication protocols (I2C/SPI) along with native PWM tracking outputs, while the Right Rail houses power management infrastructure (`5V`, `GND`, `3V3`) alongside dedicated successive-approximation analog-to-digital converter channels (`ADC1`).
+> **⚠️ CRITICAL HARDWARE SPECIFICATION:** This deployment is optimized strictly for the **ESP32-S3 Supermini Edge Headers** where all assignments remain bound below **GPIO 13**. To minimize electromagnetic cross-coupling and maintain clear tracing, the infrastructure segregates analog input sensors and the I2C bus down the Left Rail, while routing mechanical PWM control and high-speed clock timing lines down the Right Rail.
+> ![ESP32-S3 Supermini Verified Pinout Diagram](assets/esp32_s3_supermini_pinout.jpg)
 
-### Verified Master Pin-Allocation Ledger
+### Ultra-Low Pin Count Master Allocation Ledger (≤ GPIO 13)
 
 | Subsystem Target Component | Physical Pin Role / Context | Native Hardware GPIO | Silk-Screen Pin Label | Physical Board Location | Expected Signal Vector |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Pan Servo Motor** | PWM Actuational Control | **GPIO 5** | `D3` (A3) | Left Rail, Pin 1 | 50Hz Pulse Train |
-| **Tilt Servo Motor** | PWM Actuational Control | **GPIO 21** | `D6` (TX) | Left Rail, Pin 8 | 50Hz Pulse Train |
-| **I2C Shared Bus Link** | SDA (Serial Data Line) | **GPIO 6** | `D4` (SDA) | Left Rail, Pin 2 | Synchronous Open-Drain |
-| **I2C Shared Bus Link** | SCL (Serial Clock Line) | **GPIO 7** | `D5` (SCL) | Left Rail, Pin 3 | Synchronous Clock Pulse |
-| **DS1302 Real-Time Clock**| RST / Chip Select | **GPIO 9** | `D9` (MISO) | Left Rail, Pin 5 | Logic High Latch |
-| **DS1302 Real-Time Clock**| I/O (Serial Data Line) | **GPIO 10** | `D10` (MOSI)| Left Rail, Pin 6 | Bi-Directional Stream |
-| **DS1302 Real-Time Clock**| SCLK (Serial Clock) | **GPIO 20** | `D7` (RX) | Left Rail, Pin 7 | Timing Clock Pulse |
-| **Photo-Sensor Matrix** | Top-Left LDR Divider | **GPIO 1** | `ADC1-1` | Right Rail, Pin 7 | 12-Bit Analog Input |
-| **Photo-Sensor Matrix** | Top-Right LDR Divider | **GPIO 2** | `D0` (A0) | Right Rail, Pin 6 | 12-Bit Analog Input |
-| **Photo-Sensor Matrix** | Bottom-Left LDR Divider | **GPIO 3** | `D1` (A1) | Right Rail, Pin 5 | 12-Bit Analog Input |
-| **Photo-Sensor Matrix** | Bottom-Right LDR Divider| **GPIO 4** | `D2` (A2) | Right Rail, Pin 4 | 12-Bit Analog Input |
-| **LiPo Power Monitoring** | 10kΩ/10kΩ Midpoint | **GPIO 0** | `ADC1-0` | Right Rail, Pin 8 | 12-Bit Attenuated Input |
+| **Top-Left LDR** | Analog Matrix Coordinate | **GPIO 1** | `GP1` | Left Rail, Pin 3 | 12-Bit Analog Input |
+| **Top-Right LDR** | Analog Matrix Coordinate | **GPIO 2** | `GP2` | Left Rail, Pin 4 | 12-Bit Analog Input |
+| **Bottom-Left LDR** | Analog Matrix Coordinate | **GPIO 3** | `GP3` | Left Rail, Pin 5 | 12-Bit Analog Input |
+| **Bottom-Right LDR** | Analog Matrix Coordinate | **GPIO 4** | `GP4` | Left Rail, Pin 6 | 12-Bit Analog Input |
+| **LiPo Power Monitoring** | 10kΩ/10kΩ Midpoint Voltage | **GPIO 5** | `GP5` | Left Rail, Pin 7 | 12-Bit Attenuated Input |
+| **Shared Sensor Bus** | SDA (Serial Data Line) | **GPIO 6** | `GP6` | Left Rail, Pin 8 | Synchronous Open-Drain |
+| **Shared Sensor Bus** | SCL (Serial Clock Line) | **GPIO 7** | `GP7` | Left Rail, Pin 9 | Synchronous Clock Pulse |
+| **Pan Servo Motor** | PWM Actuational Control | **GPIO 8** | `GP8` | Right Rail, Pin 9 | 50Hz Pulse Train |
+| **Tilt Servo Motor** | PWM Actuational Control | **GPIO 9** | `GP9` | Right Rail, Pin 8 | 50Hz Pulse Train |
+| *System Expansion* | Reserved / Unassigned | *GPIO 10* | *GP10* | Right Rail, Pin 7 | High-Z State |
+| **DS1302 Real-Time Clock**| RST / Chip Select | **GPIO 11** | `GP11` | Right Rail, Pin 6 | Logic High Latch |
+| **DS1302 Real-Time Clock**| I/O (Serial Data Line) | **GPIO 12** | `GP12` | Right Rail, Pin 5 | Bi-Directional Stream |
+| **DS1302 Real-Time Clock**| SCLK (Serial Clock) | **GPIO 13** | `GP13` | Right Rail, Pin 4 | Timing Clock Pulse |
 
 ---
 
@@ -88,7 +90,7 @@ The solar panel energy pathway is routed through an **INA226 Bi-Directional Curr
 
 ### 3. Deep Discharge Software Latch
 The deployment of typical lithium cells with compact SE9018 charging topologies leaves the storage battery exposed to catastrophic over-discharge since these basic chargers lack integrated protection ICs. 
-* A dedicated **10kΩ / 10kΩ (±0.1% tolerance)** resistor divider network steps down the battery's raw voltage to safe analog inputs on **GPIO 0**.
+* A dedicated **10kΩ / 10kΩ (±0.1% tolerance)** resistor divider network steps down the battery's raw voltage to safe analog inputs on **GPIO 5**.
 * **The Rule Engine:** If the sampled runtime potential drops below **3.2V** (V_crit), the system invokes an un-interruptible lock state. The `TrackerController` detaches all servo channels to bring holding current down to zero, suspends WSN transmissions, and sleeps until the incoming solar power pushes the battery bank back past a safe threshold (**3.5V** hysteresis).
 
 ---
