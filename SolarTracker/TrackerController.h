@@ -2,14 +2,16 @@
 #include <Arduino.h>
 #include "ManagedServo.h"
 #include "SolarSensor.h"
-#include "SensorManager.h" // Include to check power states
+#include "SensorManager.h"
+#include "NetworkManager.h"
+#include "NetworkProtocol.h"
 
 class TrackerController
 {
 private:
     ManagedServo &pan;
     ManagedServo &tilt;
-    SensorManager &sensors; // Reference to track power health
+    SensorManager &sensors;
     uint32_t axisCooldownMs;
     uint32_t cooldownStart;
     int threshold;
@@ -24,9 +26,14 @@ public:
 
     bool cooldownExpired() const { return millis() - cooldownStart >= axisCooldownMs; }
 
-    void track(const SolarReading &s)
+    /**
+     * Executes tracking operations based on safety states, network sync telemetry, or analog LDR inputs.
+     * @param s Consumed light differential readings across the LDR matrix
+     * @param net Instantiated reference to the ESP-NOW communication interface
+     */
+    void track(const SolarReading &s, NetworkManager &net)
     {
-        // FORCE HALT: Force the mechanical subsystem to sleep if the battery is critical
+        // 1. Hardware Over-Discharge Protection Rule
         if (sensors.systemCritical)
         {
             pan.detach();
@@ -34,24 +41,50 @@ public:
             return;
         }
 
+        // 2. Cooperative Network Synchronization Overrides
+        if (net.hasPendingSync)
+        {
+            net.hasPendingSync = false; // Reset the processed latch flag
+            
+            // Reorient kinematics matching the broadcast configuration metrics
+            pan.moveTo(net.latestSyncCommand.masterPanAngle);
+            tilt.moveTo(net.latestSyncCommand.masterTiltAngle);
+            cooldownStart = millis(); // Reset tracking timeout
+            return;
+        }
+
+        // 3. Local Autonomous Tracking Execution Loop
         if (pan.busy() || tilt.busy() || !cooldownExpired()) return;
 
         bool moved = false;
 
+        // Assess horizontal tracking alignment via error bounds
         if (abs(s.horizontalError) > threshold)
         {
-            pan.moveTo(pan.angle + (s.horizontalError > 0 ? stepDegrees : -stepDegrees));
+            int targetAngle = pan.angle + (s.horizontalError > 0 ? stepDegrees : -stepDegrees);
+            pan.moveTo(constrain(targetAngle, panMin, panMax));
             moved = true;
         }
+        // Assess vertical tracking alignment via error bounds
         else if (abs(s.verticalError) > threshold)
         {
-            tilt.moveTo(tilt.angle + (s.verticalError > 0 ? stepDegrees : -stepDegrees));
+            int targetAngle = tilt.angle + (s.verticalError > 0 ? stepDegrees : -stepDegrees);
+            tilt.moveTo(constrain(targetAngle, tiltMin, tiltMax));
             moved = true;
         }
 
-        if (moved) cooldownStart = millis();
+        // 4. Peer Broadcast Broadcast Latch
+        if (moved)
+        {
+            cooldownStart = millis();
 
-        pan.angle = constrain(pan.angle, panMin, panMax);
-        tilt.angle = constrain(tilt.angle, tiltMin, tiltMax);
+            // Construct and dispatch a sync transmission to let all peer nodes copy this alignment
+            SyncPayload syncData;
+            syncData.targetEpoch = millis();
+            syncData.masterPanAngle = pan.angle;
+            syncData.masterTiltAngle = tilt.angle;
+            
+            net.broadcastSync(syncData);
+        }
     }
 };
