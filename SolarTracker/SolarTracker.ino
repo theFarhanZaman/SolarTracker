@@ -8,20 +8,30 @@
 #include "ManagedServo.h"
 #include "TrackerController.h"
 
-// Configuration Pin Allocations
-#define PAN_SERVO_PIN           10
-#define TILT_SERVO_PIN          11
-#define I2C_SDA_PIN             13
-#define I2C_SCL_PIN             12
-#define LDR_TOP_LEFT_PIN        1
-#define LDR_TOP_RIGHT_PIN       2
-#define LDR_BOTTOM_LEFT_PIN     3
-#define LDR_BOTTOM_RIGHT_PIN    4
-#define RTC_RST_PIN             5
-#define RTC_IO_PIN              6
-#define RTC_CLK_PIN             7
+/***********************************************************************
+    UPDATED CORRECT PIN CONFIGURATIONS (ESP32-S3 SUPERMINI)
+************************************************************************/
+// Kinetic Subsystem (PWM)
+#define PAN_SERVO_PIN           5   // D3 Pin on Left Rail
+#define TILT_SERVO_PIN          21  // D6 Pin on Bottom Left Rail
 
-#define BATTERY_MONITOR_PIN     8 // Resistor divider center node connected to GPIO 8
+// Native Hardware I2C Interface
+#define I2C_SDA_PIN             6   // Labeled SDA on Left Rail
+#define I2C_SCL_PIN             7   // Labeled SCL on Left Rail
+
+// Solar Sensor Array (Analog Inputs)
+#define LDR_TOP_LEFT_PIN        1   // ADC1-1 on Right Rail
+#define LDR_TOP_RIGHT_PIN       2   // A0 on Right Rail
+#define LDR_BOTTOM_LEFT_PIN     3   // A1 on Right Rail
+#define LDR_BOTTOM_RIGHT_PIN    4   // A2 on Right Rail
+
+// Battery Protection Telemetry
+#define BATTERY_MONITOR_PIN     0   // ADC1-0 on Bottom Right Rail
+
+// Legacy Serial RTC Pin Relocations (Shifted from I2C pins)
+#define RTC_RST_PIN             9   // D9 on Left Rail
+#define RTC_IO_PIN              10  // D10 on Left Rail
+#define RTC_CLK_PIN             20  // D7 on Left Rail
 
 // Infrastructure & Framework Instances
 ThreeWire rtcWire(RTC_IO_PIN, RTC_CLK_PIN, RTC_RST_PIN);
