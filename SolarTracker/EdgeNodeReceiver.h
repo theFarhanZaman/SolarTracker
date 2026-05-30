@@ -23,10 +23,10 @@ namespace MLReceiver {
             NetworkPacket packet;
             memcpy(&packet, incomingData, sizeof(NetworkPacket));
 
-            if (packet.packetType == PACKET_ML_OVERRIDE) {
-                mlControlledMode = packet.data.overrideCmd.structuralMode;
-                mlBiasPan        = packet.data.overrideCmd.appliedBiasPan;
-                mlBiasTilt       = packet.data.overrideCmd.appliedBiasTilt;
+            if (packet.header.packetType == PACKET_ML_OVERRIDE) {
+                mlControlledMode = packet.payload.overrideCmd.structuralMode;
+                mlBiasPan        = packet.payload.overrideCmd.appliedBiasPan;
+                mlBiasTilt       = packet.payload.overrideCmd.appliedBiasTilt;
             }
         }
     }
@@ -41,24 +41,23 @@ namespace MLReceiver {
         
         // Priority 1: System Hardware Faults or Emergency ML "Park Flat" command
         if (sensors.systemCritical || mlControlledMode == 1) {
-            panServo.writePosition(90);  // Store parallel to ground structure
-            tiltServo.writePosition(0);   
-            panServo.detach();           // Cut current overhead entirely
+            panServo.moveTo(90);  // Store parallel to ground structure
+            tiltServo.moveTo(0);   
+            panServo.detach();    // Cut current holding overhead entirely
             tiltServo.detach();
             return;
         }
 
-        // Priority 2: Remote Expert Mode (Applying AI Predictive Drift & Micro-Biases)
+        // Run your native light-gradient tracking algorithm first as a baseline alignment calculation
+        tracker.track(rawReading, network);
+
+        // Priority 2: Remote Expert Mode (Overlaying AI Predictive Drift & Micro-Biases onto baseline)
         if (mlControlledMode == 2) {
-            int16_t targetPan  = constrain(rawReading.calculatedPan  + mlBiasPan,  0, 180);
-            int16_t targetTilt = constrain(rawReading.calculatedTilt + mlBiasTilt, 0, 90);
+            int16_t targetPan  = constrain(panServo.angle + mlBiasPan,  0, 180);
+            int16_t targetTilt = constrain(tiltServo.angle + mlBiasTilt, 0, 90);
             
-            panServo.writePosition(targetPan);
-            tiltServo.writePosition(targetTilt);
-        } 
-        // Priority 3: Fallback Default (Standard Local Light Gradient Control)
-        else {
-            tracker.track(rawReading, network);
+            panServo.moveTo(targetPan);
+            tiltServo.moveTo(targetTilt);
         }
     }
 }
