@@ -2,14 +2,13 @@
 #include <ThreeWire.h>
 #include <RtcDS1302.h>
 
-// Import Custom Modular Components
 #include "SoftTimer.h"
 #include "SensorManager.h"
 #include "SolarSensor.h"
 #include "ManagedServo.h"
 #include "TrackerController.h"
 
-// Configuration Parameters
+// Configuration Pin Allocations
 #define PAN_SERVO_PIN           10
 #define TILT_SERVO_PIN          11
 #define I2C_SDA_PIN             13
@@ -22,47 +21,49 @@
 #define RTC_IO_PIN              6
 #define RTC_CLK_PIN             7
 
-// Hardware and Global Object Instantiation
+#define BATTERY_MONITOR_PIN     8 // Resistor divider center node connected to GPIO 8
+
+// Infrastructure & Framework Instances
 ThreeWire rtcWire(RTC_IO_PIN, RTC_CLK_PIN, RTC_RST_PIN);
 RtcDS1302<ThreeWire> rtc(rtcWire);
 
-SensorManager sensors(I2C_SDA_PIN, I2C_SCL_PIN);
+SensorManager sensors(I2C_SDA_PIN, I2C_SCL_PIN, BATTERY_MONITOR_PIN);
 SolarSensor solar(LDR_TOP_LEFT_PIN, LDR_TOP_RIGHT_PIN, LDR_BOTTOM_LEFT_PIN, LDR_BOTTOM_RIGHT_PIN);
 ManagedServo panServo(PAN_SERVO_PIN);
 ManagedServo tiltServo(TILT_SERVO_PIN);
-TrackerController tracker(panServo, tiltServo);
+TrackerController tracker(panServo, tiltServo, sensors); // Passed sensors reference here
 
-// Execution Timers
+// Timers
 SoftTimer sensorTimer(1000);
 SoftTimer trackingTimer(45000);
 SoftTimer dashboardTimer(3000);
 
 SolarReading latestSolar;
 
-void setup()
+void setup() 
 {
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n[BOOT] Starting Modular Dual-Axis System...");
+    Serial.println("\n[BOOT] Starting Protected Asynchronous Dual-Axis Tracker...");
 
     solar.begin();
     panServo.begin();
     tiltServo.begin();
 
     if (!sensors.init()) {
-        Serial.println("[WARNING] Some sensors failed to respond.");
+        Serial.println("[WARNING] Instrumentation failure detected on I2C bus.");
     }
 
     rtc.Begin();
     if (!rtc.IsDateTimeValid()) {
         rtc.SetDateTime(RtcDateTime(__DATE__, __TIME__));
     }
-    Serial.println("[BOOT] System configuration complete.");
+    Serial.println("[BOOT] Initial configurations completed successfully.");
 }
 
-void loop()
+void loop() 
 {
-    // Real-time asynchronous state updates
+    // Continuous real-time asynchronous background updates
     panServo.update();
     tiltServo.update();
 
@@ -77,11 +78,14 @@ void loop()
 
     if (dashboardTimer.expired()) {
         RtcDateTime now = rtc.GetDateTime();
-
-        // Output clean diagnostic dashboard
-        Serial.printf("\n--- TELEMETRY %02u:%02u:%02u ---\n", now.Hour(), now.Minute(), now.Second());
-        Serial.printf("Solar Panel: %.2fV | Current: %.1fmA\n", sensors.busVoltage, sensors.currentmA);
-        Serial.printf("Env: %.1f C | %.1f hPa\n", sensors.temperature, sensors.pressure);
-        Serial.printf("Servo Orientations: Pan %d° | Tilt %d°\n", panServo.angle, tiltServo.angle);
+        
+        // Comprehensive Output Telemetry
+        Serial.printf("\n==================== SYSTEM TELEMETRY ====================\n");
+        Serial.printf("TIMESTAMP   : %04u-%02u-%02u %02u:%02u:%02u\n", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second());
+        Serial.printf("SOLAR YIELD : %.3f V | %.2f mA | %.3f W\n", sensors.busVoltage, sensors.currentmA, sensors.powerW);
+        Serial.printf("BATTERY CELL: %.2f V [%s]\n", sensors.batteryVoltage, sensors.systemCritical ? "CRITICAL HALT ACTIVATED" : "HEALTHY");
+        Serial.printf("ATMOSPHERE  : Temp: %.1f°C | Pressure: %.1f hPa | Hum: %.1f%%\n", sensors.temperature, sensors.pressure, sensors.humidity);
+        Serial.printf("MECHANICS   : Pan Orientation: %d° | Tilt Orientation: %d°\n", panServo.angle, tiltServo.angle);
+        Serial.printf("==========================================================\n");
     }
 }
