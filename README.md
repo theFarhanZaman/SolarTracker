@@ -17,8 +17,8 @@ Through a peer-to-peer, low-overhead **ESP-NOW** mesh backbone, nodes execute re
 
 ### 🌟 Key Enhancements & Features
 * **Decoupled Architecture:** Follows strict Object-Oriented Design and the **Open-Closed Principle**. Hardware drivers, telemetry routing, timekeeping, and networking layers exist as strictly isolated subsystems.
-* **Deterministic Event Scheduling:** 100% asynchronous tracking, sampling, and reporting engine built on lightweight `SoftTimer` delta-time tracking—completely eliminating processor blocking and `delay()` calls.
-* **Dynamic Peer Auto-Discovery:** No hardcoded MAC address tables. Nodes utilize hardware base registers to assign dynamic IDs and apply packet sniffing to learn and register peer nodes on the fly.
+* **Deterministic Event Scheduling:** 100% asynchronous tracking, sampling, and reporting engine built on lightweight `SoftTimer` delta-time tracking—eliminating processor blocking and `delay()` calls.
+* **Dynamic Peer Auto-Discovery:** No hardcoded MAC address tables. Nodes utilize hardware-based registers to assign dynamic IDs and apply packet sniffing to learn and register peer nodes on the fly.
 * **Precision Energy Analytics:** High-side power tracking via a dedicated I2C INA226 monitor tracking exact micro-level Solar Input Voltage, Current draw, and net Power Generation.
 * **Multi-Stage Critical Safety Latches:** Integrated hardware-software safety boundaries mapping LiPo voltage states through an analog attenuation matrix to automatically isolate mechanical components during low-power events.
 * **Zero-Drift Kinematics:** Active-duty cycle servo actuation that immediately detaches PWM control lines post-maneuver to eradicate micro-vibration, minimize mechanical gear wear, and completely kill holding current overhead.
@@ -50,26 +50,26 @@ The edge node utilizes a highly efficient multi-layered execution plan. Hardware
 
 ---
 
-## ⚡ Hardware Realization & Core Pinouts
+## ⚡ Hardware Realization & Verified Pinouts
 
-> **⚠️ CRITICAL HARDWARE SPECIFICATION:** The ESP32-S3 Supermini footprint features varying pin allocations across component batches. This system layout explicitly mirrors the standard processing variant where the high-speed I2C bus (`SDA`/`SCL`) is anchored to the **Left Rail Pins 2 & 3**, and `ADC1` channels are mapped down the **Right Rail**. Interchanging these layouts will cause hardware bus line deadlocks.
+> **⚠️ CRITICAL HARDWARE SPECIFICATION:** This deployment explicitly tracks the **ESP32-S3 Supermini Pinout Layout** detailed below. The Left Rail routes the primary high-speed hardware communication protocols (I2C/SPI) along with native PWM tracking outputs, while the Right Rail houses power management infrastructure (`5V`, `GND`, `3V3`) alongside dedicated successive-approximation analog-to-digital converter channels (`ADC1`).
 
-### Reference Pin-Allocation Ledger
+### Verified Master Pin-Allocation Ledger
 
-| Function / Component | Wire Line | ESP32-S3 GPIO | Physical Pin Identifier | Expected Signal |
-| :--- | :--- | :--- | :--- | :--- |
-| **Pan Servo Motor** | PWM Control | **GPIO 5** | Left Rail, Pin 1 (`D3`) | 50Hz Pulse Train |
-| **Tilt Servo Motor** | PWM Control | **GPIO 21** | Left Rail, Pin 8 (`D6`) | 50Hz Pulse Train |
-| **I2C Bus Interconnect** | SDA (Data) | **GPIO 6** | Left Rail, Pin 2 (`SDA`) | Digital Bus |
-| **I2C Bus Interconnect** | SCL (Clock) | **GPIO 7** | Left Rail, Pin 3 (`SCL`) | Digital Bus |
-| **DS1302 RTC** | RST / CE | **GPIO 9** | Left Rail, Pin 5 (`D9`) | Logic High Enable |
-| **DS1302 RTC** | I/O (Data) | **GPIO 10** | Left Rail, Pin 6 (`D10`) | Serial Data |
-| **DS1302 RTC** | SCLK | **GPIO 20** | Left Rail, Pin 7 (`D7`) | Clock Pulse |
-| **Top Left LDR** | Analog Output | **GPIO 1** | Right Rail, Pin 7 (`ADC1_CH0`) | 12-Bit Analog V |
-| **Top Right LDR** | Analog Output | **GPIO 2** | Right Rail, Pin 6 (`ADC1_CH1`) | 12-Bit Analog V |
-| **Bottom Left LDR** | Analog Output | **GPIO 3** | Right Rail, Pin 5 (`ADC1_CH2`) | 12-Bit Analog V |
-| **Bottom Right LDR**| Analog Output | **GPIO 4** | Right Rail, Pin 4 (`ADC1_CH3`) | 12-Bit Analog V |
-| **LiPo Voltage Sensor**| Analog Divider| **GPIO 0** | Right Rail, Pin 8 (`ADC1_CH4`) | 12-Bit Attenuated V |
+| Subsystem Target Component | Physical Pin Role / Context | Native Hardware GPIO | Silk-Screen Pin Label | Physical Board Location | Expected Signal Vector |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Pan Servo Motor** | PWM Actuational Control | **GPIO 5** | `D3` (A3) | Left Rail, Pin 1 | 50Hz Pulse Train |
+| **Tilt Servo Motor** | PWM Actuational Control | **GPIO 21** | `D6` (TX) | Left Rail, Pin 8 | 50Hz Pulse Train |
+| **I2C Shared Bus Link** | SDA (Serial Data Line) | **GPIO 6** | `D4` (SDA) | Left Rail, Pin 2 | Synchronous Open-Drain |
+| **I2C Shared Bus Link** | SCL (Serial Clock Line) | **GPIO 7** | `D5` (SCL) | Left Rail, Pin 3 | Synchronous Clock Pulse |
+| **DS1302 Real-Time Clock**| RST / Chip Select | **GPIO 9** | `D9` (MISO) | Left Rail, Pin 5 | Logic High Latch |
+| **DS1302 Real-Time Clock**| I/O (Serial Data Line) | **GPIO 10** | `D10` (MOSI)| Left Rail, Pin 6 | Bi-Directional Stream |
+| **DS1302 Real-Time Clock**| SCLK (Serial Clock) | **GPIO 20** | `D7` (RX) | Left Rail, Pin 7 | Timing Clock Pulse |
+| **Photo-Sensor Matrix** | Top-Left LDR Divider | **GPIO 1** | `ADC1-1` | Right Rail, Pin 7 | 12-Bit Analog Input |
+| **Photo-Sensor Matrix** | Top-Right LDR Divider | **GPIO 2** | `D0` (A0) | Right Rail, Pin 6 | 12-Bit Analog Input |
+| **Photo-Sensor Matrix** | Bottom-Left LDR Divider | **GPIO 3** | `D1` (A1) | Right Rail, Pin 5 | 12-Bit Analog Input |
+| **Photo-Sensor Matrix** | Bottom-Right LDR Divider| **GPIO 4** | `D2` (A2) | Right Rail, Pin 4 | 12-Bit Analog Input |
+| **LiPo Power Monitoring** | 10kΩ/10kΩ Midpoint | **GPIO 0** | `ADC1-0` | Right Rail, Pin 8 | 12-Bit Attenuated Input |
 
 ---
 
@@ -112,6 +112,69 @@ The networking layer is designed to scale horizontally without manually rewritin
 
 The software architecture completely isolates components to make tracking errors easy to trace and test.
 
+### 1. Unified Network Protocol Layer (`NetworkProtocol.h`)
+Defines the binary structural boundaries across the wireless space. Packed attributes ensure identical memory alignment across compilers.
+```cpp
+#pragma once
+#include <Arduino.h>
+
+enum PacketType : uint8_t {
+    PACKET_PING_DISCOVERY,
+    PACKET_TELEMETRY_SHARE,
+    PACKET_ACTION_SYNC
+};
+
+struct __attribute__((packed)) NetworkHeader {
+    uint8_t  sourceID;        
+    uint8_t  packetType;      
+    uint32_t sequenceNumber;  
+};
+
+struct __attribute__((packed)) SyncPayload {
+    uint32_t targetEpoch;     
+    int16_t  masterPanAngle;  
+    int16_t  masterTiltAngle;
+};
+
+struct __attribute__((packed)) NetworkPacket {
+    NetworkHeader header;
+    union {
+        SyncPayload syncData;
+    } payload;
+};
+```
+
+### 2. Custom WSN Network Coordinator (`TrackerNetManager.h`)
+Manages the non-blocking asynchronous callback hooks and provides local reference registers.
+```cpp
+#pragma once
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include "NetworkProtocol.h"
+
+class TrackerNetManager {
+private:
+    uint8_t localNodeID;
+    uint32_t seqCounter;
+    uint8_t broadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    static void OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len);
+    bool registerPeer(const uint8_t *mac_addr);
+
+public:
+    static TrackerNetManager* instance; 
+    bool hasPendingSync;
+    SyncPayload latestSyncCommand;
+
+    TrackerNetManager() : localNodeID(0), seqCounter(0), hasPendingSync(false) { instance = this; }
+    
+    bool begin();
+    bool broadcastSync(const SyncPayload &syncData);
+    uint8_t getLocalNodeID() const { return localNodeID; }
+};
+```
+
 ---
 
 ## 💻 Compilation & Deployment Manual
@@ -141,7 +204,7 @@ Ensure these libraries are available within your compiler's environment pathing 
 ## 📈 Future System Roadmap
 * **Astronomical Ephemeris Integration:** Implementing high-precision solar positioning algorithms (SPA) based on solar time offsets to run predictive positioning on cloudy days.
 * **Decentralized Master Election (Raft Protocol Mini):** Implementing a dynamic voting mechanism across nodes so that if a primary tracking node drops offline, the remaining nodes elect a new cluster head.
-* **Aerodynamic Drag Protection Latch:** Utilizing realtime MPU6050 accelerometer frequencies to flag mechanical vibration spikes and park the panel matrix horizontally during dangerous winds.
+* **Aerodynamic Drag Protection Latch:** Utilizing real-time MPU6050 accelerometer frequencies to flag mechanical vibration spikes and park the panel matrix horizontally during dangerous winds.
 
 ---
 
