@@ -4,7 +4,7 @@
 #include <esp_now.h>
 #include "NetworkProtocol.h"
 
-class NetworkManager {
+class TrackerNetManager {
 private:
     uint8_t localNodeID;
     uint32_t seqCounter;
@@ -14,13 +14,13 @@ private:
     bool registerPeer(const uint8_t *mac_addr);
 
 public:
-    static NetworkManager* instance; // Singleton pointer for callback routing
+    static TrackerNetManager* instance; // Singleton pointer for callback routing
     
     // Shared state references for synchronization loops
     bool hasPendingSync;
     SyncPayload latestSyncCommand;
 
-    NetworkManager() : localNodeID(0), seqCounter(0), hasPendingSync(false) { instance = this; }
+    TrackerNetManager() : localNodeID(0), seqCounter(0), hasPendingSync(false) { instance = this; }
     
     bool begin();
     bool broadcastSync(const SyncPayload &syncData);
