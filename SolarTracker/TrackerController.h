@@ -3,7 +3,7 @@
 #include "ManagedServo.h"
 #include "SolarSensor.h"
 #include "SensorManager.h"
-#include "NetworkManager.h"
+#include "TrackerNetManager.h"
 #include "NetworkProtocol.h"
 
 class TrackerController
@@ -29,9 +29,9 @@ public:
     /**
      * Executes tracking operations based on safety states, network sync telemetry, or analog LDR inputs.
      * @param s Consumed light differential readings across the LDR matrix
-     * @param net Instantiated reference to the ESP-NOW communication interface
+     * @param net Instantiated reference to the custom ESP-NOW interface
      */
-    void track(const SolarReading &s, NetworkManager &net)
+    void track(const SolarReading &s, TrackerNetManager &net)
     {
         // 1. Hardware Over-Discharge Protection Rule
         if (sensors.systemCritical)
@@ -44,12 +44,11 @@ public:
         // 2. Cooperative Network Synchronization Overrides
         if (net.hasPendingSync)
         {
-            net.hasPendingSync = false; // Reset the processed latch flag
+            net.hasPendingSync = false; 
             
-            // Reorient kinematics matching the broadcast configuration metrics
             pan.moveTo(net.latestSyncCommand.masterPanAngle);
             tilt.moveTo(net.latestSyncCommand.masterTiltAngle);
-            cooldownStart = millis(); // Reset tracking timeout
+            cooldownStart = millis(); 
             return;
         }
 
@@ -58,14 +57,12 @@ public:
 
         bool moved = false;
 
-        // Assess horizontal tracking alignment via error bounds
         if (abs(s.horizontalError) > threshold)
         {
             int targetAngle = pan.angle + (s.horizontalError > 0 ? stepDegrees : -stepDegrees);
             pan.moveTo(constrain(targetAngle, panMin, panMax));
             moved = true;
         }
-        // Assess vertical tracking alignment via error bounds
         else if (abs(s.verticalError) > threshold)
         {
             int targetAngle = tilt.angle + (s.verticalError > 0 ? stepDegrees : -stepDegrees);
@@ -73,12 +70,11 @@ public:
             moved = true;
         }
 
-        // 4. Peer Broadcast Broadcast Latch
+        // 4. Peer Broadcast Latch
         if (moved)
         {
             cooldownStart = millis();
 
-            // Construct and dispatch a sync transmission to let all peer nodes copy this alignment
             SyncPayload syncData;
             syncData.targetEpoch = millis();
             syncData.masterPanAngle = pan.angle;
