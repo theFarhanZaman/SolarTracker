@@ -343,7 +343,41 @@ To safely deploy this intelligent expansion across your infrastructure, follow t
 3. **Deploy Core Model in PyCharm:** Move the exported `.pkl` artifacts into PyCharm, wire up the real-time feedback script, and test that commands sent from Python parse smoothly back onto your edge node tracking arrays.
 ```
 
+## 🚀 Summary of Recent Updates
 
+We have refactored the codebase to prioritize modularity, hardware-agnostic communication, and autonomous environmental adaptation.
+
+### 1. Modular Firmware Architecture
+* **Separation of Concerns:** The system logic has been decoupled. The machine learning command parsing and kinetic override logic are now encapsulated in `EdgeNodeReceiver.h`, ensuring the main `SolarTracker.ino` remains clean and maintainable.
+* **Encapsulated State:** Implemented a new namespace (`MLReceiver`) for ML operations, preventing global scope contamination and enhancing system reliability.
+
+### 2. Intelligent Decision Framework
+* **Predictive ML Engine:** Integrated a Python-based Intelligence Hub that utilizes K-Means clustering and k-NN classification to analyze atmospheric conditions.
+* **Autonomous Adaptive Biasing:** The system can now distinguish between "Normal," "Overcast," and "Storm" states, dynamically pushing micro-bias adjustments to nodes to optimize power harvesting in real-time.
+
+### 3. Cross-Platform & Hardware Agnostic
+* **Dynamic Port Detection:** The Python control hub no longer relies on hardcoded serial ports (like `/dev/ttyACM0`). It dynamically scans USB hardware descriptors (VID/PID) to identify and connect to ESP32-S3 gateways automatically on Windows, Linux, or macOS.
+* **Unified Python Environment:** All dependencies have been standardized, and the system now supports installation via standard package managers to satisfy PEP 668 environment restrictions.
+
+### 4. Real-Time Telemetry & Visualization
+* **MVC Dashboard:** Added a multi-threaded Python GUI using `Tkinter` and `Matplotlib` to provide real-time visualization of solar telemetry (Voltage, Current, Temp, Humidity, Pressure).
+
+
+
+---
+
+## 🛠️ Quick Start
+
+### Embedded Firmware
+1. Open the project in the Arduino IDE.
+2. Ensure you have the `esp32` board definitions installed.
+3. Verify your pin definitions in `SolarTracker.ino`.
+4. Compile and flash to your ESP32-S3 node.
+
+### Intelligence Hub
+1. Install the required Python dependencies:
+   ```bash
+   pip install scikit-learn pandas numpy joblib pyserial matplotlib
 
 ## 💻 Compilation & Deployment Manual
 
