@@ -10,6 +10,7 @@
 #include "TrackerController.h"
 #include "NetworkProtocol.h"
 #include "TrackerNetManager.h"
+#include "EdgeNodeReceiver.h"  // <--- Imported ML Modularity Frame
 
 /***********************************************************************
     VERIFIED HIGH-ACCURACY PIN ALLOCATIONS (STRICTLY <= GPIO 13)
@@ -27,7 +28,6 @@
 // --- RIGHT RAIL: Kinetic Servos & Serial Timekeeping ---
 #define PAN_SERVO_PIN           8   // Pin Label: GP8  | Role: PWM Pan Servo Actuation
 #define TILT_SERVO_PIN          9   // Pin Label: GP9  | Role: PWM Tilt Servo Actuation
-// GP10 is currently unassigned / reserved for future hardware expansions
 #define RTC_RST_PIN             11  // Pin Label: GP11 | Role: DS1302 RTC Chip Select (RST)
 #define RTC_IO_PIN              12  // Pin Label: GP12 | Role: DS1302 RTC Serial Data (I/O)
 #define RTC_CLK_PIN             13  // Pin Label: GP13 | Role: DS1302 RTC Serial Clock (CLK)
@@ -63,6 +63,8 @@ void setup()
     // Spin up Peer Network Protocols
     if (network.begin()) {
         Serial.printf("[NET] Node Active. Dynamic Address Matrix Key: ID [0x%02X]\n", network.getLocalNodeID());
+        // Register the dynamic ML processing function inside the active ESP-NOW intercept stack
+        esp_now_register_recv_cb(MLReceiver::OnDataRecv);
     } else {
         Serial.println("[CRITICAL] ESP-NOW Communications stack failure.");
     }
@@ -99,9 +101,9 @@ void loop()
         latestSolar = solar.read();
     }
 
-    // Async task loop: Evaluate tracking decision hierarchy
+    // Async task loop: Evaluate tracking decision hierarchy using ML arbitration mapping
     if (trackingTimer.expired()) {
-        tracker.track(latestSolar, network);
+        MLReceiver::processTracking(latestSolar, panServo, tiltServo, tracker, network, sensors);
     }
 
     // Async task loop: Print operational dashboard out of USB CDC interface
@@ -110,6 +112,8 @@ void loop()
         
         Serial.printf("\n[NODE TELEMETRY - ID 0x%02X] Timestamp: %02u:%02u:%02u\n", 
                       network.getLocalNodeID(), now.Hour(), now.Minute(), now.Second());
+        Serial.printf("ML STATE    : Mode=%d | Active Bias Vector: Pan=%d°, Tilt=%d°\n",
+                      MLReceiver::mlControlledMode, MLReceiver::mlBiasPan, MLReceiver::mlBiasTilt);
         Serial.printf("ENERGY LOG  : Harvest: %.2fV | Draw: %.1fmA | Battery Storage: %.2fV [%s]\n", 
                       sensors.busVoltage, sensors.currentmA, sensors.batteryVoltage, 
                       sensors.systemCritical ? "CRITICAL SLEEP MODE" : "HEALTHY STATUS");
