@@ -12,20 +12,25 @@
 #include "TrackerNetManager.h"
 
 /***********************************************************************
-    VERIFIED TARGET PIN ALLOCATIONS FOR ESP32-S3 SUPERMINI
+    VERIFIED HIGH-ACCURACY PIN ALLOCATIONS (STRICTLY <= GPIO 13)
+    Mapped directly to the ESP32-S3 Supermini Edge Headers
 ************************************************************************/
-#define PAN_SERVO_PIN           5   
-#define TILT_SERVO_PIN          21  
-#define I2C_SDA_PIN             6   
-#define I2C_SCL_PIN             7   
-#define LDR_TOP_LEFT_PIN        1   
-#define LDR_TOP_RIGHT_PIN       2   
-#define LDR_BOTTOM_LEFT_PIN     3   
-#define LDR_BOTTOM_RIGHT_PIN    4   
-#define BATTERY_MONITOR_PIN     0   
-#define RTC_RST_PIN             9   
-#define RTC_IO_PIN              10  
-#define RTC_CLK_PIN             20  
+// --- LEFT RAIL: Sensor Inputs & System I2C Bus ---
+#define LDR_TOP_LEFT_PIN        1   // Pin Label: GP1  | Role: Analog Sensor Array
+#define LDR_TOP_RIGHT_PIN       2   // Pin Label: GP2  | Role: Analog Sensor Array
+#define LDR_BOTTOM_LEFT_PIN     3   // Pin Label: GP3  | Role: Analog Sensor Array
+#define LDR_BOTTOM_RIGHT_PIN    4   // Pin Label: GP4  | Role: Analog Sensor Array
+#define BATTERY_MONITOR_PIN     5   // Pin Label: GP5  | Role: Analog LiPo Battery Monitor
+#define I2C_SDA_PIN             6   // Pin Label: GP6  | Role: Hardware I2C SDA Bus Line
+#define I2C_SCL_PIN             7   // Pin Label: GP7  | Role: Hardware I2C SCL Bus Line
+
+// --- RIGHT RAIL: Kinetic Servos & Serial Timekeeping ---
+#define PAN_SERVO_PIN           8   // Pin Label: GP8  | Role: PWM Pan Servo Actuation
+#define TILT_SERVO_PIN          9   // Pin Label: GP9  | Role: PWM Tilt Servo Actuation
+// GP10 is currently unassigned / reserved for future hardware expansions
+#define RTC_RST_PIN             11  // Pin Label: GP11 | Role: DS1302 RTC Chip Select (RST)
+#define RTC_IO_PIN              12  // Pin Label: GP12 | Role: DS1302 RTC Serial Data (I/O)
+#define RTC_CLK_PIN             13  // Pin Label: GP13 | Role: DS1302 RTC Serial Clock (CLK)
 
 /***********************************************************************
     GLOBAL CLASS INSTANTIATIONS & REFERENCES
@@ -48,6 +53,7 @@ SolarReading latestSolar;
 
 void setup() 
 {
+    // Initialize serial pipeline via Native USB CDC
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n========================================================");
@@ -61,14 +67,17 @@ void setup()
         Serial.println("[CRITICAL] ESP-NOW Communications stack failure.");
     }
 
+    // Hardware Peripheral Initialization
     solar.begin();
     panServo.begin();
     tiltServo.begin();
 
+    // Verify I2C Bus Stability (INA226 / BME280 / MPU6050)
     if (!sensors.init()) {
         Serial.println("[WARNING] Peripheral communication anomaly detected on I2C bus.");
     }
 
+    // Secure Timekeeping Synchronization
     rtc.Begin();
     if (!rtc.IsDateTimeValid()) {
         Serial.println("[RTC] Hardware clock invalid. Compiling structural defaults...");
@@ -80,18 +89,22 @@ void setup()
 
 void loop() 
 {
+    // Execute non-blocking servo position calculations
     panServo.update();
     tiltServo.update();
 
+    // Async task loop: Collect data from sensors
     if (sensorTimer.expired()) {
         sensors.update();
         latestSolar = solar.read();
     }
 
+    // Async task loop: Evaluate tracking decision hierarchy
     if (trackingTimer.expired()) {
         tracker.track(latestSolar, network);
     }
 
+    // Async task loop: Print operational dashboard out of USB CDC interface
     if (dashboardTimer.expired()) {
         RtcDateTime now = rtc.GetDateTime();
         
