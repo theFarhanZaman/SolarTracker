@@ -341,7 +341,7 @@ To safely deploy this intelligent expansion across your infrastructure, follow t
 1. **Log Data (1-2 Weeks):** Run your existing ESP32 tracking network as-is, but leave a laptop connected to logging scripts to capture raw structural parameters across varied weather patterns.
 2. **Perform Data Profiling in Google Colab:** Upload your generated `.csv` data logs into Colab. Use the **Elbow Method** to plot inertia configurations and find the mathematical sweet spot for your number of clusters ($K$).
 3. **Deploy Core Model in PyCharm:** Move the exported `.pkl` artifacts into PyCharm, wire up the real-time feedback script, and test that commands sent from Python parse smoothly back onto your edge node tracking arrays.
-```
+
 
 ## 🚀 Summary of Recent Updates
 
