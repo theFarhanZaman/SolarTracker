@@ -1,8 +1,8 @@
-#include "NetworkManager.h"
+#include "TrackerNetManager.h"
 
-NetworkManager* NetworkManager::instance = nullptr;
+TrackerNetManager* TrackerNetManager::instance = nullptr;
 
-bool NetworkManager::begin() {
+bool TrackerNetManager::begin() {
     WiFi.mode(WIFI_STA);
     
     // Auto-generate a unique 1-byte ID from the last byte of the chip's base MAC address
@@ -25,7 +25,7 @@ bool NetworkManager::begin() {
     return (esp_now_add_peer(&peerInfo) == ESP_OK);
 }
 
-bool NetworkManager::registerPeer(const uint8_t *mac_addr) {
+bool TrackerNetManager::registerPeer(const uint8_t *mac_addr) {
     if (esp_now_is_peer_exist(mac_addr)) return true; // Already registered
 
     esp_now_peer_info_t peerInfo;
@@ -37,7 +37,7 @@ bool NetworkManager::registerPeer(const uint8_t *mac_addr) {
     return (esp_now_add_peer(&peerInfo) == ESP_OK);
 }
 
-bool NetworkManager::broadcastSync(const SyncPayload &syncData) {
+bool TrackerNetManager::broadcastSync(const SyncPayload &syncData) {
     NetworkPacket packet;
     packet.header.sourceID = localNodeID;
     packet.header.packetType = PACKET_ACTION_SYNC;
@@ -49,7 +49,7 @@ bool NetworkManager::broadcastSync(const SyncPayload &syncData) {
     return (result == ESP_OK);
 }
 
-void NetworkManager::OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len) {
+void TrackerNetManager::OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len) {
     if (len < sizeof(NetworkHeader) || instance == nullptr) return;
 
     // Dynamically learn the sender's identity if they are new to the local array
