@@ -1,31 +1,33 @@
 #pragma once
 #include <Arduino.h>
 
-// Unique signatures for structural routing
 enum PacketType : uint8_t {
-    PACKET_PING_DISCOVERY,
-    PACKET_TELEMETRY_SHARE,
-    PACKET_ACTION_SYNC
+    PACKET_TELEMETRY,
+    PACKET_ML_OVERRIDE
 };
 
-// Uniform header appended to ALL network transmissions
-struct __attribute__((packed)) NetworkHeader {
-    uint8_t  sourceID;        // Last byte of the sender's MAC address
-    uint8_t  packetType;      // Maps to PacketType enum
-    uint32_t sequenceNumber;  // Prevents processing duplicate packets
+struct __attribute__((packed)) TelemetryPayload {
+    float busVoltage;
+    float currentmA;
+    float temperature;
+    float humidity;
+    float pressure;
+    int16_t panAngle;
+    int16_t tiltAngle;
 };
 
-// Payload definitions - Add new structures here as your project grows!
-struct __attribute__((packed)) SyncPayload {
-    uint32_t targetEpoch;     // Synchronized timestamp
-    int16_t  masterPanAngle;  // Targeted orientation sharing
-    int16_t  masterTiltAngle;
+struct __attribute__((packed)) MLOverridePayload {
+    uint8_t structuralMode; // 0 = Normal Auto, 1 = Park Flat (Storm), 2 = Applied Bias
+    int16_t appliedBiasPan; 
+    int16_t appliedBiasTilt;
 };
 
 struct __attribute__((packed)) NetworkPacket {
-    NetworkHeader header;
+    uint8_t sourceNodeID;
+    uint8_t packetType;
+    uint32_t sequenceNumber;
     union {
-        SyncPayload syncData;
-        // You can layer environmental payloads here later without changing the header logic
-    } payload;
+        TelemetryPayload telemetry;
+        MLOverridePayload overrideCmd;
+    } data;
 };
