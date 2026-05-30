@@ -11,9 +11,9 @@ A production-grade, highly scalable C++ firmware architecture for distributed Wi
 ---
 
 ## 📖 System Abstract
-This repository implements an enterprise-grade **Dual-Axis Solar Tracker and Atmospheric Monitoring Node** designed around the **ESP32-S3 Supermini** form factor. Moving past traditional, isolated tracking configurations, this system realizes a decentralized **Wireless Sensor Network (WSN)** capable of multi-node cooperative estimation. 
+This repository implements an enterprise-grade **Dual-Axis Solar Tracker and Atmospheric Monitoring Node** designed around the **ESP32-S3 Supermini** form factor. Moving beyond traditional, isolated tracking configurations, this system enables a decentralized **Wireless Sensor Network (WSN)** capable of cooperative estimation across multiple nodes. 
 
-Through a peer-to-peer, low-overhead **ESP-NOW** mesh backbone, nodes execute real-time orientation synchronization and distributed telemetry aggregation. This structure mitigates localized shading, physical obstructions, and individual sensory anomalies by allowing the cluster to dynamically align with the most efficient harvesting node.
+Through a peer-to-peer, low-overhead **ESP-NOW** mesh backbone, nodes execute real-time orientation synchronization and distributed telemetry aggregation. This structure mitigates localized shading, physical obstructions, and individual sensory anomalies by allowing the cluster to align with the most efficient harvesting node dynamically.
 
 ### 🌟 Key Enhancements & Features
 * **Decoupled Architecture:** Follows strict Object-Oriented Design and the **Open-Closed Principle**. Hardware drivers, telemetry routing, timekeeping, and networking layers exist as strictly isolated subsystems.
