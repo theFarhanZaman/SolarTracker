@@ -53,7 +53,7 @@ The edge node utilizes a highly efficient multi-layered execution plan. Hardware
 ## ⚡ Hardware Realization & Verified Pinouts
 
 > **⚠️ CRITICAL HARDWARE SPECIFICATION:** This deployment is optimized strictly for the **ESP32-S3 Supermini Edge Headers** where all assignments remain bound below **GPIO 13**. To minimize electromagnetic cross-coupling and maintain clear tracing, the infrastructure segregates analog input sensors and the I2C bus down the Left Rail, while routing mechanical PWM control and high-speed clock timing lines down the Right Rail.
-> ![ESP32-S3 Supermini Verified Pinout Diagram](assets/esp32_s3_supermini_pinout.jpg)
+> ![ESP32-S3 Supermini Verified Pinout Diagram](Assets/esp32_s3_supermini_pinout.jpg)
 
 ### Ultra-Low Pin Count Master Allocation Ledger (≤ GPIO 13)
 
