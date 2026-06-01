@@ -75,6 +75,173 @@ The edge node utilizes a highly efficient multi-layered execution plan. Hardware
 
 ---
 
+# Hardware Schematic & Solder Connection Blueprint
+
+**Project:** Autonomous Self-Sustaining Solar Tracking Platform  
+**Target Board:** Dot-Type Veroboard (Perfboard / Matrix Board)  
+**Wiring Material:** 30 AWG Solid Single-Core Silicone Wire  
+
+---
+
+## ⚡ 1. Power Generation & Path Management
+
+This block defines the electrical topology from energy harvest to regulation. All grounds (GND / -) must form a single, unbroken physical trunk line on your dot board to prevent signal drift and ground loops.
+
+```text
+ [ 5V 200mA SOLAR PANEL ]
+    (+)        (-)
+     |          |
+     v          |
++----------+    |
+|  INA219  |    |
+|  (IN+)   |    |
+|  (IN-)   |    |
++----------+    |
+     |          |
+     v          v
++------------------------+
+|   SE9018 MPPT CHARGER  |
+|  (IN+)          (IN-)  |
+|  (BAT+)        (BAT-)  |
++------------------------+
+     |              |
+     +-------+      +-------+
+     |       |      |       |
+     v       v      v       v
+  (LiPo+) (VIN+) (LiPo-) (VIN-)
+     |       |      |       |
+     |   +---------------+  |
+     |   | DC-DC BOOST   |  |
+     |   | (MT3608/220)  |  |
+     |   | (VOUT+) (VOUT-)|  |
+     |   +---------------+  |
+     |        |       |     |
+     |        |       +-----+---> [ MASTER GROUND TRUNK ]
+     |        |             |
+     |        +-------------+---> [ REGULATED 5V SERVO RAIL ]
+     |                      |
+     +--[10k Ohm]--+--[10k Ohm]---+     (Battery Monitoring Voltage Divider)
+                   |
+                   v
+             To ESP32 GPIO 5
+```
+
+### 🛠️ Infrastructure Rail Specifications
+* **Master Ground Trunk (GND):** 3 parallel strands of 30 AWG twisted together, soldered continuously across a vertical row of dots. Connects to SE9018 `BAT-`, Boost `VIN-`, Boost `VOUT-`, and ESP32 `GND`.
+* **System VCC Rail (3.7V - 4.2V):** 2 parallel strands of 30 AWG twisted together. Connects SE9018 `BAT+` directly to the Boost Converter `VIN+` and the battery monitoring divider.
+* **Regulated 5V Servo Rail:** 2 parallel strands of 30 AWG twisted together. Connects Boost Converter `VOUT+` straight to the center power pins of the servo headers and the ESP32 `5V/VBUS` pin.
+* **3.3V Logic Bus:** Single strand of 30 AWG. Connected directly to the ESP32-S3 `3V3` output pin to power low-voltage logic components safely.
+
+---
+
+## 🚌 2. Shared I2C Sensor Bus (3.3V Logic)
+
+The power monitor (INA219), environmental sensor (BMP280), and inertial unit (MPU6050) sit on a shared synchronous communication bus. They draw power exclusively from the ESP32’s internal 3.3V step-down regulator to remain logic-safe.
+
+```text
+ESP32-S3 (3V3 Out) -----------------------+-----------+-----------+ (3.3V Logic Bus)
+                                          |           |           |
+ESP32-S3 (GND)     --------------------+  |           |           | (Master Ground Trunk)
+                                       |  |           |           |
+ESP32-S3 (GPIO 6)  ---[ SDA ] ---------+--+-----+     |           |
+                                       |  |     |     |           |
+ESP32-S3 (GPIO 7)  ---[ SCL ] ---------+--+--+  |     |           |
+                                       |  |  |  |     |           |
+                                       v  v  v  v     v           v
+                                    [ INA219 ]     [ BMP280 ]  [ MPU6050 ]
+                                    VCC/GND/SCL/SDA  VCC/GND     VCC/GND/SCL/SDA
+                                                     SCL/SDA
+```
+
+> ⚠️ **Note:** Ensure your sensor modules have onboard 4.7k Ohm pull-up resistors on the SDA and SCL lines to 3.3V. If using raw ICs, add these pull-ups manually to the dot board.
+
+---
+
+## 🧵 3. Dedicated System Logic & Actuator I/O
+
+These lines use isolated, point-to-point 30 AWG runs to carry dedicated pulse trains, discrete signals, or specialized temporal serial streams.
+
+### 🤖 Actuator Controls (High-Current Loop)
+```text
+[ Regulated 5V Servo Rail ] --------------+---------------------+ (From Boost VOUT+)
+                                          |                     |
+                                    [+ Pad]             [+ Pad] 
+                                    ( 470uF Bulk Electrolytic Cap )
+                                    [- Pad]             [- Pad]
+                                          |                     |
+                                          v                     v
+                                    [ PAN SERVO ]        [ TILT SERVO ]
+                                      5V  (Red)            5V  (Red)
+                                      GND (Brown)          GND (Brown)
+                                      PWM (Orange)         PWM (Orange)
+                                       ^                    ^
+                                       |                    |
+ESP32-S3 (GPIO 8) ---------------------+                    |
+ESP32-S3 (GPIO 9) ------------------------------------------+
+```
+
+### ☀️ Light Dependent Resistor (LDR) Quadrant Array
+Four structurally identical voltage dividers map the sky quadrants into the 12-bit Analog-to-Digital Converter (ADC) channels.
+
+```text
+(3.3V Logic Bus) ----------+-----------+-----------+-----------+
+                           |           |           |           |
+                        [LDR TL]    [LDR TR]    [LDR BL]    [LDR BR]
+                           |           |           |           |
+                           +--GP1      +--GP2      +--GP3      +--GP4
+                           |           |           |           |
+                        [10k Ohm]   [10k Ohm]   [10k Ohm]   [10k Ohm]
+                           |           |           |           |
+(Master Ground Trunk) -----+-----------+-----------+-----------+
+```
+
+### ⏰ Chronos Layer (DS1302 Real-Time Clock)
+```text
+ESP32-S3 (3V3 Out) --------------------------------------------> [ VCC ]
+ESP32-S3 (GND)     --------------------------------------------> [ GND ]
+ESP32-S3 (GPIO 11) ---[ Logic High Latch / Latch ]-------------> [ RST ]
+ESP32-S3 (GPIO 12) ---[ Bi-Directional Stream / Data ]---------> [ DAT ]
+ESP32-S3 (GPIO 13) ---[ Timing Clock Pulse / Clock ]-----------> [ CLK ]
+```
+
+---
+
+## 📋 4. Master Pin Connection & Netlist Table
+
+| From Component Pin | To Component Pin | Wire Specification | Net Type / Signal Role |
+| :--- | :--- | :--- | :--- |
+| **Solar Panel (+)** | INA219 Terminal `IN+` | 30 AWG Single Core | Raw Harvest VCC Ingest |
+| **INA219 Terminal `IN-`** | SE9018 Module `IN+` | 30 AWG Single Core | Monitored Charge Path |
+| **Solar Panel (-)** | SE9018 Module `IN-` | 30 AWG Single Core | Panel Ground Return |
+| **SE9018 `BAT+`** | 1S LiPo (+) & Boost `VIN+` | 30 AWG Single Core | Raw Battery Voltage Potentials |
+| **SE9018 `GND-`** | 1S LiPo (-) & Boost `VIN-` | 3x Twisted 30 AWG | **Master Ground Node** |
+| **Boost Converter `VOUT+`**| ESP32 `5V` & Servo `VCC` | 2x Twisted 30 AWG | **Regulated 5V Rail** |
+| **Boost Converter `VOUT-`**| Master Ground Trunk | 3x Twisted 30 AWG | Main Ground System Sink |
+| **ESP32-S3 `3V3`** | Sensors, RTC, LDR Matrix | 30 AWG Single Core | **Clean 3.3V Logic Bus** |
+| **ESP32-S3 `GND`** | Master Ground Trunk | 30 AWG Single Core | MCU Ground Reference |
+| **ESP32-S3 `GPIO 1`** | Top-Left LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH0) |
+| **ESP32-S3 `GPIO 2`** | Top-Right LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH1) |
+| **ESP32-S3 `GPIO 3`** | Bottom-Left LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH2) |
+| **ESP32-S3 `GPIO 4`** | Bottom-Right LDR Divider Node| 30 AWG Single Core | Analog Input (ADC1_CH3) |
+| **ESP32-S3 `GPIO 5`** | 10k/10k LiPo Attenuation Node| 30 AWG Single Core | Analog Input (Battery Health) |
+| **ESP32-S3 `GPIO 6`** | INA219 / BMP280 / MPU6050 `SDA` | 30 AWG Single Core | I2C Synchronous Data Line |
+| **ESP32-S3 `GPIO 7`** | INA219 / BMP280 / MPU6050 `SCL` | 30 AWG Single Core | I2C Synchronous Clock Line |
+| **ESP32-S3 `GPIO 8`** | Pan Servo Signal Wire (Orange) | 30 AWG Single Core | 50Hz PWM Actuation Vector |
+| **ESP32-S3 `GPIO 9`** | Tilt Servo Signal Wire (Orange)| 30 AWG Single Core | 50Hz PWM Actuation Vector |
+| **ESP32-S3 `GPIO 11`**| DS1302 Module `RST` | 30 AWG Single Core | Chip Select Latch Line |
+| **ESP32-S3 `GPIO 12`**| DS1302 Module `DAT` | 30 AWG Single Core | 3-Wire Serial Data Stream |
+| **ESP32-S3 `GPIO 13`**| DS1302 Module `CLK` | 30 AWG Single Core | Serial Clock Timing Train |
+
+---
+
+## 🔍 5. Mandatory Pre-Flight Verification Steps
+
+Before inserting the ESP32-S3 into its female headers or connecting the LiPo battery, complete these quality control tests with a multimeter:
+
+1. **Pre-Power Boost Calibration:** Connect an independent power source (or your LiPo) strictly to the `VIN+` and `VIN-` pads of the DC-DC Boost Converter *before* wiring its output to the rest of the board. Measure `VOUT+` and turn the brass potentiometer with a screwdriver until it outputs exactly **5.0V**.
+2. **The Isolation Check:** Turn your multimeter to Continuity (Beep) mode. Place one probe on the **3.3V Logic Bus** and the other on the **Regulated 5V Servo Rail**. It must remain completely silent. 
+3. **The Ground Continuity Scan:** Touch one probe to the SE9018 `GND` pad and the other to the ground pins of the farthest sensor and servo modules. The meter must beep cleanly with a resistance reading near 0 Ohm, proving your thick twisted trunk line is continuous.
+
 ## 🔋 Power Management & Safety Architecture
 
 To guarantee long-term operational survival in remote field environments, the power architecture relies on a decoupled, dual-rail distribution matrix. High-current inductive loads (servos) are isolated from high-precision instrumentation circuits to prevent voltage sags from generating calculation drift.
