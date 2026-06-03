@@ -570,6 +570,150 @@ Ensure these libraries are available within your compiler's environment pathing 
 
 ---
 
+# Sky-Link Core Gateway Command Center
+
+Welcome to the **Sky-Link Core Gateway**, the operational neural center of the Sky-Link emergency communication node platform. This system acts as a high-speed telemetry collection bridge, parsing dual-bus digital instrumentation streams over high-speed serial networks and projecting an active tactical dashboard to mission operators via full-duplex WebSockets.
+
+Designed specifically for resilience during disaster-response network drops, this gateway features an automated **Dual-Mode Execution Architecture**: it aggregates real-world physical sensor vectors when tethered to tactical hardware, and seamlessly falls back to a high-fidelity synthetic telemetry simulation layer if the physical interface becomes decoupled.
+
+---
+
+## 🛰️ System Architecture Overview
+
+The system is separated cleanly into two decoupled layers:
+
+1. **The Tactical Backend (`FastAPI`)**: Manages non-blocking concurrent worker threads tasked with scanning system USB registers, filtering specific device signatures (`VID: 0x303A`, `PID: 0x1001`), reading incoming serial payloads, executing embedded machine learning inference profiles, and serving data frames over a real-time WebSocket protocol layer.
+2. **The Command Interface (`Vite + React + TS`)**: A high-density dashboard built on dark-mode industrial guidelines. Uses an atomic asset structure to plot real-time microvolt power consumption models, thermal system limits, configuration state registers, and multi-threaded system logging buffers.
+
+---
+
+## 📂 Repository Directory Layout
+
+Ensure your root workspace folder is structured exactly as shown below before running configuration routines:
+
+```text
+Gateway Application/
+├── main.py                     # FastAPI server core & background hardware thread loops
+└── gateway-ui/                 # Frontend visualization environment
+    ├── index.html              # Core browser viewport entry point
+    ├── package.json            # Node ecosystem library and script ledger
+    ├── vite.config.ts          # Vite asset pipeline configuration rules
+    ├── postcss.config.js       # CSS processor compilation bridges
+    ├── tailwind.config.js      # Utility-first style boundary rules
+    └── src/
+        ├── main.tsx            # React application mounting bridge
+        ├── index.css           # Global Tailwind directives
+        └── App.tsx             # Complete visual application and fallback engine
+```
+
+---
+
+## 🛠️ Step-by-Step Clean Environment Setup
+
+This installation workflow assumes you are running on a fresh, unconfigured Linux environment (Ubuntu 24.04 LTS / Linux Mint) with zero packages pre-installed.
+
+### Step 1: System Level Prerequisites
+Open your terminal window and update the local package indexing tables, then install essential system compilation binaries (`curl`, `git`, and Python dependencies):
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install curl git python3-pip python3-venv -y
+```
+
+### Step 2: Linux Hardware Access Permissions (Crucial)
+By default, Linux restricts raw access to USB serial comports (`/dev/ttyACM*` or `/dev/ttyUSB*`) to administrative accounts. Grant your current user system access permissions to the hardware bus group:
+
+```bash
+sudo usermod -aG dialout $USER
+```
+> ⚠️ **Important Note:** For these permission group changes to take effect on your system, you must **log out of your current Linux session and log back in** (or reboot your system).
+
+### Step 3: Install Node.js via NVM (Node Version Manager)
+Avoid standard `apt nodejs` package targets, as they often bundle outdated versions. Use the professional Node Version Manager pipeline to secure a modern LTS environment:
+
+```bash
+# Download and install the NVM controller script
+curl -o- [https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh](https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh) | bash
+
+# Register the new paths into your active shell instance
+source ~/.bashrc
+
+# Automatically grab the stable enterprise-ready Long Term Support distribution
+nvm install --lts
+```
+
+Verify that the tools are available and matching modern expectations:
+```bash
+node -v   # Expected Output: v22.x.x or higher
+npm -v    # Expected Output: v10.x.x or higher
+```
+
+---
+
+## 🚀 Execution Routines
+
+### 📡 Phase A: Launch the Backend Services
+1. Change your terminal path context to the root of your project directory (wrapped in quotes to safely handle the folder space):
+   ```bash
+   cd "/home/farhan/Codes/Gateway Application"
+   ```
+2. Create an isolated Python virtual environment framework to prevent library version collisions:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+3. Install the required runtime libraries into your environment wrapper:
+   ```bash
+   pip install fastapi uvicorn pyserial
+   ```
+4. Execute the web application gateway through the Uvicorn ASGI production server:
+   ```bash
+   python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+### 💻 Phase B: Launch the Interface Canvas
+1. Open a new separate terminal tab or window.
+2. Direct the terminal path inside the frontend folder structure:
+   ```bash
+   cd "/home/farhan/Codes/Gateway Application/gateway-ui"
+   ```
+3. Command NPM to analyze your local dependency manifests and build the underlying asset ecosystems automatically:
+   ```bash
+   npm install
+   ```
+4. Fire up the local Vite hot-reloading development server profile:
+   ```bash
+   npm run dev
+   ```
+
+---
+
+## 🎮 Verifying System States
+
+Once both endpoints are running cleanly:
+
+1. Open your web browser and target your local loop address: `http://localhost:5173`.
+2. Look at the upper right corner badge matrix:
+   * **`Live` (Green)**: The gateway successfully connected with the running FastAPI web application, matching its socket verification framework, and is passing raw hardware array inputs.
+   * **`Disconnected` (Red) / Fallback Mode**: The system notices the Python script or physical USB bus is currently offline, drops a warning flag into the system terminal logs, and fires up the browser-side high-fidelity mock stream generator. 
+3. Click through the primary navigation blocks:
+   * **Dashboard**: View real-time metric cards (voltage, current drawing values, ambient thermal envelopes) alongside streaming area graphs.
+   * **Data Analytics**: Track split-line telemetry mapping cross-examining current drop curves against voltage baselines.
+   * **Control Matrix**: Test configuration parameters, slide simulation intervals, and toggle safety overcurrent interlocks.
+   * **System Logs**: View time-stamped telemetry validations streaming dynamically inside a localized terminal console simulation.
+
+---
+
+## 🔍 Troubleshooting Matrix
+
+| Symptoms Encountered | Core Engineering Root Cause | Corrective Operations |
+| :--- | :--- | :--- |
+| `npm error code ENOENT` | The execution command was fired while standing outside the path scope containing `package.json`. | Run `cd "/home/farhan/Codes/Gateway Application/gateway-ui"` before executing npm routines. |
+| `Uncaught SyntaxError` regarding `lucide-react` | A typo inside the code requested an icon name that does not exist inside the icon libraries. | Ensure your code uses `<Sliders />` instead of outdated names like `<SlidersToggle />`. |
+| Dashboard permanently says **`Connecting`** | The React UI is functional but cannot verify a connection bridge to port `8000`. | Check your backend terminal window. Ensure `uvicorn` is initialized on port 8000 and has not crashed. |
+| Python script crashes with `SerialException` | The user account lacks standard system group permissions to tap into physical system hardware registers. | Run `sudo usermod -aG dialout $USER`, then log completely out of your operating system session and back in. |
+
+
 ## 📈 Future System Roadmap
 * **Astronomical Ephemeris Integration:** Implementing high-precision solar positioning algorithms (SPA) based on solar time offsets to run predictive positioning on cloudy days.
 * **Decentralized Master Election (Raft Protocol Mini):** Implementing a dynamic voting mechanism across nodes so that if a primary tracking node drops offline, the remaining nodes elect a new cluster head.
