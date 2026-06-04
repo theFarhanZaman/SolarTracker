@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   LayoutDashboard, BarChart3, Sliders, Terminal,
   Activity, Zap, Thermometer, Droplets, Gauge,
-  Power, Radio, Cpu, Download, RefreshCw,
-  TrendingUp, ShieldAlert, CheckCircle2, AlertTriangle
+  Radio, Cpu, RefreshCw,
+  TrendingUp, CheckCircle2
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
@@ -36,10 +36,130 @@ interface LogEntry {
   message: string;
 }
 
+type TabKey = 'dashboard' | 'analytics' | 'controls' | 'logs';
+
 const MAX_HISTORY = 40;
+const MAX_LOGS = 100;
+const SIM_INTERVAL_MS = 1000;
+const RECONNECT_BASE_MS = 4000;
+const RECONNECT_MAX_MS = 15000;
+
+const formatClock = (date = new Date()) =>
+  date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const rand = (min: number, max: number) => min + Math.random() * (max - min);
+
+const round = (value: number, digits = 3) => Number(value.toFixed(digits));
+
+const createFrame = (
+  timestamp: string,
+  Voltage: number,
+  Current: number,
+  Temp: number,
+  Humidity: number,
+  Pressure: number
+): TelemetryFrame => ({
+  Timestamp: timestamp,
+  Voltage: round(Voltage, 2),
+  Current: round(Current, 3),
+  Temp: round(Temp, 1),
+  Humidity: round(Humidity, 1),
+  Pressure: round(Pressure, 1),
+  Power_W: round(Voltage * Current, 3)
+});
+
+const createSeedHistory = (): TelemetryFrame[] => {
+  const seedData: TelemetryFrame[] = [];
+  const now = new Date();
+
+  for (let i = MAX_HISTORY; i > 0; i--) {
+    const pastTime = new Date(now.getTime() - i * 4000);
+    const timeStr = formatClock(pastTime);
+    const voltage = 18.5 + Math.random() * 2.5;
+    const current = 1.2 + Math.random() * 0.8;
+    seedData.push(
+      createFrame(
+        timeStr,
+        voltage,
+        current,
+        32.0 + Math.random() * 4.5,
+        65.0 + Math.random() * 10,
+        1008.0 + Math.random() * 4
+      )
+    );
+  }
+
+  return seedData;
+};
+
+const createSeedInsights = (telemetry: TelemetryFrame): AIInsights => ({
+  State: 'STABLE_TRACKING',
+  Rain_Prob: 12,
+  High: round(Math.max(telemetry.Temp + 10.4, 42.4), 1),
+  Low: round(Math.min(telemetry.Temp - 12.2, 19.8), 1)
+});
+
+const normalizeTelemetryPayload = (rawTel: any): TelemetryFrame => {
+  const voltage = Number(rawTel?.voltage ?? rawTel?.Voltage ?? rawTel?.v ?? 0);
+  const current = Number(rawTel?.current ?? rawTel?.Current ?? rawTel?.c ?? 0);
+  const temp = Number(rawTel?.temp ?? rawTel?.Temp ?? rawTel?.temperature ?? 0);
+  const humidity = Number(rawTel?.humidity ?? rawTel?.Humidity ?? 0);
+  const pressure = Number(rawTel?.pressure ?? rawTel?.Pressure ?? 0);
+
+  return createFrame(formatClock(), voltage, current, temp, humidity, pressure);
+};
+
+const createSyntheticStep = (previous: TelemetryFrame, tick: number): TelemetryFrame => {
+  const trendPhase = tick / 12;
+  const driftPhase = tick / 27;
+
+  const targetVoltage = 19.8 + Math.sin(trendPhase) * 0.45 + Math.cos(driftPhase) * 0.15;
+  const targetCurrent = 1.55 + Math.cos(trendPhase * 0.92) * 0.18 + Math.sin(driftPhase * 0.7) * 0.05;
+  const targetTemp = 34.5 + Math.sin(tick / 18) * 1.4 + Math.cos(tick / 41) * 0.5;
+  const targetHumidity = 68.0 + Math.cos(tick / 22) * 2.8 + Math.sin(tick / 37) * 1.2;
+  const targetPressure = 1009.5 + Math.sin(tick / 26) * 0.75 + Math.cos(tick / 19) * 0.35;
+
+  const voltage = clamp(previous.Voltage + (targetVoltage - previous.Voltage) * 0.18 + rand(-0.03, 0.03), 17.9, 22.8);
+  const current = clamp(previous.Current + (targetCurrent - previous.Current) * 0.22 + rand(-0.012, 0.012), 0.8, 2.25);
+  const temp = clamp(previous.Temp + (targetTemp - previous.Temp) * 0.14 + rand(-0.08, 0.08), 29, 45);
+  const humidity = clamp(previous.Humidity + (targetHumidity - previous.Humidity) * 0.1 + rand(-0.16, 0.16), 55, 82);
+  const pressure = clamp(previous.Pressure + (targetPressure - previous.Pressure) * 0.12 + rand(-0.06, 0.06), 1004, 1015);
+
+  return createFrame(formatClock(), voltage, current, temp, humidity, pressure);
+};
+
+const deriveSyntheticInsights = (telemetry: TelemetryFrame): AIInsights => {
+  const humidityPressureScore = (telemetry.Humidity - 60) * 0.9 - (telemetry.Pressure - 1008) * 1.5;
+  const heatScore = telemetry.Temp - 35.5;
+  const powerScore = telemetry.Power_W - 31;
+
+  let state = 'STABLE_TRACKING';
+  if (heatScore > 4.2) {
+    state = 'THERMAL_ADJUST';
+  } else if (humidityPressureScore > 14) {
+    state = 'WEATHER_RISK';
+  } else if (powerScore > 6) {
+    state = 'OPTIMIZING';
+  } else if (powerScore < -4) {
+    state = 'IDLE_RECOVERY';
+  }
+
+  const rainProb = clamp(Math.round(8 + (telemetry.Humidity - 58) * 1.35 + (1011 - telemetry.Pressure) * 2.2), 3, 92);
+  const high = round(telemetry.Temp + clamp(7.5 + rand(0, 2.4), 7.5, 10.5), 1);
+  const low = round(telemetry.Temp - clamp(11.0 + rand(0, 2.2), 11.0, 13.5), 1);
+
+  return {
+    State: state,
+    Rain_Prob: rainProb,
+    High: high,
+    Low: low
+  };
+};
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'controls' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [status, setStatus] = useState<'Connecting' | 'Live' | 'Disconnected'>('Connecting');
 
   // Controls state definitions
@@ -56,125 +176,230 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const simulatorIntervalRef = useRef<number | null>(null);
+  const simulatorActiveRef = useRef(false);
+  const simulatorTickRef = useRef(0);
+  const lastTelemetryRef = useRef<TelemetryFrame>(currentData.telemetry);
+  const isUnmountingRef = useRef(false);
+  const socketGenerationRef = useRef(0);
+  const connectGatewayRef = useRef<() => void>(() => undefined);
 
   // Unified Central Logging System
-  const addLog = (type: LogEntry['type'], message: string) => {
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setLogs(prev => [{ id: Math.random().toString(36).substr(2, 9), timestamp, type, message }, ...prev].slice(0, 100));
-  };
+  const addLog = useCallback((type: LogEntry['type'], message: string) => {
+    const timestamp = formatClock();
+    setLogs(prev => [{ id: Math.random().toString(36).slice(2, 11), timestamp, type, message }, ...prev].slice(0, MAX_LOGS));
+  }, []);
+
+  const commitFrame = useCallback((frame: TelemetryFrame, aiInsights: AIInsights, source: 'ws' | 'simulation') => {
+    lastTelemetryRef.current = frame;
+    setCurrentData({ telemetry: frame, ai_insights: aiInsights });
+    setHistory(prev => [...prev, frame].slice(-MAX_HISTORY));
+
+    if (source === 'ws' && Math.random() > 0.9) {
+      addLog('info', `Frame received. Generation Vector: ${frame.Power_W.toFixed(2)} W`);
+    }
+  }, [addLog]);
+
+  const calculateMetrics = useCallback((series: TelemetryFrame[]) => {
+    if (series.length === 0) {
+      return { avgPower: 0, maxPower: 0, totalVoltageDelta: 0, peakCurrent: 0 };
+    }
+
+    const powers = series.map(h => h.Power_W);
+    const currents = series.map(h => h.Current);
+    const voltages = series.map(h => h.Voltage);
+
+    const avgPower = powers.reduce((a, b) => a + b, 0) / series.length;
+    const maxPower = Math.max(...powers);
+    const peakCurrent = Math.max(...currents);
+    const totalVoltageDelta = voltages.reduce((acc, value, idx) => {
+      if (idx === 0) return acc;
+      return acc + Math.abs(value - voltages[idx - 1]);
+    }, 0);
+
+    return { avgPower, maxPower, totalVoltageDelta, peakCurrent };
+  }, []);
 
   // Seed initial dummy dataset history for cold-start visualization density
   useEffect(() => {
-    const seedData: TelemetryFrame[] = [];
-    const now = new Date();
-    for (let i = MAX_HISTORY; i > 0; i--) {
-      const pastTime = new Date(now.getTime() - i * 4000);
-      const timeStr = pastTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const v = parseFloat((18.5 + Math.random() * 2.5).toFixed(2));
-      const c = parseFloat((1.2 + Math.random() * 0.8).toFixed(3));
-      seedData.push({
-        Timestamp: timeStr,
-        Voltage: v,
-        Current: c,
-        Temp: parseFloat((32.0 + Math.random() * 4.5).toFixed(1)),
-        Humidity: parseFloat((65.0 + Math.random() * 10).toFixed(1)),
-        Pressure: parseFloat((1008.0 + Math.random() * 4).toFixed(1)),
-        Power_W: parseFloat((v * c).toFixed(3))
-      });
-    }
+    const seedData = createSeedHistory();
+    const seedTelemetry = seedData[seedData.length - 1];
+    const seedInsights = createSeedInsights(seedTelemetry);
+
+    simulatorTickRef.current = seedData.length;
+    lastTelemetryRef.current = seedTelemetry;
+
     setHistory(seedData);
     setCurrentData({
-      telemetry: seedData[seedData.length - 1],
-      ai_insights: { State: 'STABLE_TRACKING', Rain_Prob: 12, High: 42.4, Low: 19.8 }
+      telemetry: seedTelemetry,
+      ai_insights: seedInsights
     });
+
     addLog('info', 'Telemetry visualization matrix loaded successfully.');
-  }, []);
+  }, [addLog]);
 
   // Persistent Gateway Communications Pipeline Loop
-  useEffect(() => {
-    const connectGateway = () => {
-      setStatus('Connecting');
-      addLog('info', 'Initiating high-speed tracking pipeline downstream handshake...');
+  const scheduleReconnect = useCallback(() => {
+    if (isUnmountingRef.current) return;
+    if (reconnectTimeoutRef.current !== null) return;
 
-      const wsUrl = `ws://${window.location.hostname}:8000/ws/telemetry`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    reconnectAttemptRef.current += 1;
+    const delay = Math.min(RECONNECT_BASE_MS * reconnectAttemptRef.current, RECONNECT_MAX_MS);
+    addLog('warn', `Gateway reconnect queued in ${Math.ceil(delay / 1000)}s (attempt ${reconnectAttemptRef.current}).`);
 
-      ws.onopen = () => {
-        setStatus('Live');
-        addLog('success', 'Active operational tracking stream bound to gateway node.');
-      };
+    reconnectTimeoutRef.current = window.setTimeout(() => {
+      reconnectTimeoutRef.current = null;
+      if (!isUnmountingRef.current) {
+        connectGatewayRef.current();
+      }
+    }, delay);
+  }, [addLog]);
 
-      ws.onmessage = (event) => {
-        try {
-          const rawPayload = JSON.parse(event.data);
-          if (rawPayload && rawPayload.telemetry) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            const rawTel = rawPayload.telemetry;
+  const connectGateway = useCallback(() => {
+    if (isUnmountingRef.current) return;
 
-            // Defensive Key Normalization: Translates lower_snake_case hardware schemas safely
-            const frame: TelemetryFrame = {
-              Timestamp: timeStr,
-              Voltage: rawTel.voltage !== undefined ? rawTel.voltage : (rawTel.Voltage || 0),
-              Current: rawTel.current !== undefined ? rawTel.current : (rawTel.Current || 0),
-              Temp: rawTel.temp !== undefined ? rawTel.temp : (rawTel.Temp || 0),
-              Humidity: rawTel.humidity !== undefined ? rawTel.humidity : (rawTel.Humidity || 0),
-              Pressure: rawTel.pressure !== undefined ? rawTel.pressure : (rawTel.Pressure || 0),
-              Power_W: 0
-            };
+    if (reconnectTimeoutRef.current !== null) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
 
-            frame.Power_W = frame.Voltage * frame.Current;
+    const generation = socketGenerationRef.current + 1;
+    socketGenerationRef.current = generation;
 
-            setCurrentData({
-              telemetry: frame,
-              ai_insights: rawPayload.ai_insights || { State: 'DYNAMIC', Rain_Prob: 5, High: 45, Low: 20 }
-            });
+    try {
+      wsRef.current?.close();
+    } catch {
+      // Ignore shutdown races from previous sockets.
+    }
 
-            setHistory(prev => [...prev, frame].slice(-MAX_HISTORY));
+    setStatus('Connecting');
+    addLog('info', 'Initiating high-speed tracking pipeline downstream handshake...');
 
-            if (Math.random() > 0.90) {
-              addLog('info', `Frame received. Generation Vector: ${frame.Power_W.toFixed(2)} W`);
-            }
-          }
-        } catch (err) {
-          addLog('critical', `Data serialization structural fault: ${err}`);
-        }
-      };
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${wsProtocol}://${window.location.hostname}:8000/ws/telemetry`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-      ws.onerror = () => {
-        setStatus('Disconnected');
-      };
-
-      ws.onclose = () => {
-        setStatus('Disconnected');
-        addLog('warn', 'Gateway socket dropped. Activating automatic line recovery...');
-        setTimeout(connectGateway, 4000);
-      };
+    ws.onopen = () => {
+      if (isUnmountingRef.current || socketGenerationRef.current !== generation) return;
+      reconnectAttemptRef.current = 0;
+      setStatus('Live');
+      addLog('success', 'Active operational tracking stream bound to gateway node.');
     };
 
+    ws.onmessage = (event) => {
+      if (isUnmountingRef.current || socketGenerationRef.current !== generation) return;
+
+      try {
+        const rawPayload = JSON.parse(event.data);
+
+        if (rawPayload && rawPayload.telemetry) {
+          const frame = normalizeTelemetryPayload(rawPayload.telemetry);
+          const aiInsights = rawPayload.ai_insights || deriveSyntheticInsights(frame);
+          commitFrame(frame, aiInsights, 'ws');
+        }
+      } catch (err) {
+        addLog('critical', `Data serialization structural fault: ${String(err)}`);
+      }
+    };
+
+    ws.onerror = () => {
+      if (isUnmountingRef.current || socketGenerationRef.current !== generation) return;
+      setStatus('Disconnected');
+    };
+
+    ws.onclose = () => {
+      if (isUnmountingRef.current || socketGenerationRef.current !== generation) return;
+
+      setStatus('Disconnected');
+      addLog('warn', 'Gateway socket dropped. Activating automatic line recovery...');
+      scheduleReconnect();
+    };
+  }, [addLog, commitFrame, scheduleReconnect]);
+
+  useEffect(() => {
+    connectGatewayRef.current = connectGateway;
+  }, [connectGateway]);
+
+  // Fallback Simulation Engine: keeps the charts alive whenever the socket is not OPEN.
+  useEffect(() => {
+    const socketOpen = wsRef.current?.readyState === WebSocket.OPEN;
+    const shouldSimulate = !socketOpen;
+
+    if (shouldSimulate) {
+      if (simulatorIntervalRef.current === null) {
+        if (!simulatorActiveRef.current) {
+          addLog('warn', 'WebSocket not OPEN. Synthetic telemetry simulator engaged.');
+          simulatorActiveRef.current = true;
+        }
+
+        simulatorIntervalRef.current = window.setInterval(() => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            return;
+          }
+
+          simulatorTickRef.current += 1;
+          const nextFrame = createSyntheticStep(lastTelemetryRef.current, simulatorTickRef.current);
+          const nextInsights = deriveSyntheticInsights(nextFrame);
+          commitFrame(nextFrame, nextInsights, 'simulation');
+        }, SIM_INTERVAL_MS);
+      }
+    } else {
+      if (simulatorIntervalRef.current !== null) {
+        clearInterval(simulatorIntervalRef.current);
+        simulatorIntervalRef.current = null;
+      }
+
+      if (simulatorActiveRef.current) {
+        addLog('success', 'Live gateway stream restored. Synthetic simulator standing by.');
+        simulatorActiveRef.current = false;
+      }
+    }
+
+    return () => {
+      if (simulatorIntervalRef.current !== null) {
+        clearInterval(simulatorIntervalRef.current);
+        simulatorIntervalRef.current = null;
+      }
+    };
+  }, [status, addLog, commitFrame]);
+
+  useEffect(() => {
+    isUnmountingRef.current = false;
     connectGateway();
-    return () => wsRef.current?.close();
-  }, []);
 
-  // Compute Live High-Density Metrics Summaries for Analytics Engineering Deck
-  const calculateMetrics = () => {
-    if (history.length === 0) return { avgPower: 0, maxPower: 0, totalVoltageDelta: 0, peakCurrent: 0 };
-    const powers = history.map(h => h.Power_W);
-    const currents = history.map(h => h.Current);
-    const avgPower = powers.reduce((a, b) => a + b, 0) / history.length;
-    const maxPower = Math.max(...powers);
-    const peakCurrent = Math.max(...currents);
-    return { avgPower, maxPower, peakCurrent };
-  };
+    return () => {
+      isUnmountingRef.current = true;
+      socketGenerationRef.current += 1;
 
-  const metrics = calculateMetrics();
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
 
-  // Downlink Transmitter to Gateway Hardware
-  const transmitControlPacket = (updatedMode = overrideMode, pBias = panBias, tBias = tiltBias) => {
+      if (simulatorIntervalRef.current !== null) {
+        clearInterval(simulatorIntervalRef.current);
+        simulatorIntervalRef.current = null;
+      }
+
+      try {
+        wsRef.current?.close();
+      } catch {
+        // Safe cleanup.
+      }
+
+      wsRef.current = null;
+    };
+  }, [connectGateway]);
+
+  const metrics = useMemo(() => calculateMetrics(history), [calculateMetrics, history]);
+
+  const transmitControlPacket = useCallback((updatedMode = overrideMode, pBias = panBias, tBias = tiltBias) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const packet = {
-        command: "HARDWARE_OVERRIDE_PACKET",
+        command: 'HARDWARE_OVERRIDE_PACKET',
         structuralMode: updatedMode,
         appliedBiasPan: pBias,
         appliedBiasTilt: tBias
@@ -184,7 +409,29 @@ export default function App() {
     } else {
       addLog('warn', 'Uplink transmission rejected: Gateway line is offline.');
     }
-  };
+  }, [addLog, overrideMode, panBias, tiltBias]);
+
+  const navTabs = useMemo(() => ([
+    { id: 'dashboard' as const, label: 'Command Grid', icon: LayoutDashboard },
+    { id: 'analytics' as const, label: 'Data Analytics Deck', icon: BarChart3 },
+    { id: 'controls' as const, label: 'Hardware Controls', icon: Sliders },
+    { id: 'logs' as const, label: 'System Logs Feed', icon: Terminal }
+  ]), []);
+
+  const dashboardCards = useMemo(() => ([
+    { title: 'Bus Voltage', val: `${currentData.telemetry.Voltage.toFixed(2)} V`, sub: 'Bus Input', icon: Cpu, color: 'text-blue-400', bg: 'bg-blue-500/5' },
+    { title: 'Current Draw', val: `${currentData.telemetry.Current.toFixed(3)} A`, sub: 'Load Consumption', icon: Activity, color: 'text-amber-400', bg: 'bg-amber-500/5' },
+    { title: 'Active Wattage', val: `${currentData.telemetry.Power_W.toFixed(3)} W`, sub: 'Calculated Yield', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/5' },
+    { title: 'Temperature', val: `${currentData.telemetry.Temp.toFixed(1)} °C`, sub: 'Core Thermo', icon: Thermometer, color: 'text-rose-400', bg: 'bg-rose-500/5' },
+    { title: 'Relative Humidity', val: `${currentData.telemetry.Humidity.toFixed(1)} %`, sub: 'Atmosphere Sensor', icon: Droplets, color: 'text-teal-400', bg: 'bg-teal-500/5' },
+    { title: 'Baro Pressure', val: `${currentData.telemetry.Pressure.toFixed(0)} hPa`, sub: 'Absolute Static', icon: Gauge, color: 'text-indigo-400', bg: 'bg-indigo-500/5' }
+  ]), [currentData.telemetry]);
+
+  const controlModes = useMemo(() => ([
+    { id: 0, label: 'Fully Autonomous PID', desc: 'Standard local routine execution loops' },
+    { id: 1, label: 'Mechanical Safe-Lock', desc: 'Lock flat and isolate tracker drivers' },
+    { id: 2, label: 'Expert Bias Calibration', desc: 'Inject custom micro-adjustments' }
+  ]), []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased font-sans selection:bg-indigo-500/30">
@@ -218,18 +465,14 @@ export default function App() {
       <div className="flex-1 flex flex-col md:flex-row">
         {/* Navigation Control Panel Core Dock Rail */}
         <nav className="w-full md:w-64 border-r border-slate-900 bg-slate-900/10 p-4 space-y-2 flex flex-row md:flex-col md:justify-start overflow-x-auto md:overflow-x-visible">
-          {[
-            { id: 'dashboard', label: 'Command Grid', icon: LayoutDashboard },
-            { id: 'analytics', label: 'Data Analytics Deck', icon: BarChart3 },
-            { id: 'controls', label: 'Hardware Controls', icon: Sliders },
-            { id: 'logs', label: 'System Logs Feed', icon: Terminal }
-          ].map(tab => {
+          {navTabs.map(tab => {
             const Icon = tab.icon;
             const isTarget = activeTab === tab.id;
+
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all duration-200 whitespace-nowrap min-w-[150px] md:min-w-0 ${
                   isTarget
                     ? 'bg-gradient-to-r from-indigo-600/20 to-violet-600/5 border border-indigo-500/30 text-indigo-400 shadow-inner'
@@ -252,14 +495,7 @@ export default function App() {
 
               {/* High Density Status KPI Overview Row */}
               <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-                {[
-                  { title: 'Bus Voltage', val: `${currentData.telemetry.Voltage.toFixed(2)} V`, sub: 'Bus Input', icon: Cpu, color: 'text-blue-400', bg: 'bg-blue-500/5' },
-                  { title: 'Current Draw', val: `${currentData.telemetry.Current.toFixed(3)} A`, sub: 'Load Consumption', icon: Activity, color: 'text-amber-400', bg: 'bg-amber-500/5' },
-                  { title: 'Active Wattage', val: `${currentData.telemetry.Power_W.toFixed(3)} W`, sub: 'Calculated Yield', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/5' },
-                  { title: 'Temperature', val: `${currentData.telemetry.Temp.toFixed(1)} °C`, sub: 'Core Thermo', icon: Thermometer, color: 'text-rose-400', bg: 'bg-rose-500/5' },
-                  { title: 'Relative Humidity', val: `${currentData.telemetry.Humidity.toFixed(1)} %`, sub: 'Atmosphere Sensor', icon: Droplets, color: 'text-teal-400', bg: 'bg-teal-500/5' },
-                  { title: 'Baro Pressure', val: `${currentData.telemetry.Pressure.toFixed(0)} hPa`, sub: 'Absolute Static', icon: Gauge, color: 'text-indigo-400', bg: 'bg-indigo-500/5' }
-                ].map((card, idx) => {
+                {dashboardCards.map((card, idx) => {
                   const Icon = card.icon;
                   return (
                     <div key={idx} className="bg-slate-900/40 border border-slate-900 p-4 rounded-2xl flex flex-col justify-between hover:border-slate-800 transition-all shadow-md group">
@@ -526,11 +762,7 @@ export default function App() {
               <div className="space-y-4">
                 <label className="text-xs font-semibold font-mono text-slate-400 uppercase tracking-wider block">Operational Routine Configuration</label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    { id: 0, label: 'Fully Autonomous PID', desc: 'Standard local routine execution loops' },
-                    { id: 1, label: 'Mechanical Safe-Lock', desc: 'Lock flat and isolate tracker drivers' },
-                    { id: 2, label: 'Expert Bias Calibration', desc: 'Inject custom micro-adjustments' }
-                  ].map(mode => (
+                  {controlModes.map(mode => (
                     <button
                       key={mode.id}
                       onClick={() => { setOverrideMode(mode.id); transmitControlPacket(mode.id, panBias, tiltBias); }}
