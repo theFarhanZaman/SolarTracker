@@ -11,7 +11,13 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
 
 void setup() {
     Serial.begin(921600);
-    while (!Serial) { delay(10); }
+    
+    // Defensive Field Timeout: Prevents permanent locking if booting headless in production
+    uint32_t startTime = millis();
+    while (!Serial) { 
+        if (millis() - startTime > 4000) break; 
+        delay(10); 
+    }
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -55,9 +61,12 @@ void loop() {
                 int16_t biasTilt = (int16_t)csvLine.substring(index4 + 1).toInt();
 
                 NetworkPacket outboundPacket;
-                outboundPacket.header.sourceID = 0x00; 
+                outboundPacket.header.sourceID = 0x00; // 0x00 denotes Central Gateway Base Station Hub
                 outboundPacket.header.packetType = PACKET_ML_OVERRIDE;
                 outboundPacket.header.sequenceNumber = gatewaySeqCount++;
+                
+                // Pack Routed Addressing Footprint Variables
+                outboundPacket.payload.overrideCmd.targetID       = targetID; // Handled safely now
                 outboundPacket.payload.overrideCmd.structuralMode = mode;
                 outboundPacket.payload.overrideCmd.appliedBiasPan = biasPan;
                 outboundPacket.payload.overrideCmd.appliedBiasTilt = biasTilt;
