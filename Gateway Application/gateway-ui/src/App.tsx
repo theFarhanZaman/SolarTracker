@@ -95,23 +95,40 @@ export default function App() {
       pushLog('success', 'Uplink synchronization protocol established. Telemetry matrix is active.');
     };
 
-    ws.onmessage = (event) => {
-      try {
-        const dataFrame = JSON.parse(event.data);
-        if (dataFrame.node_id === undefined) return;
+   ws.onmessage = (event) => {
+  try {
+    const rawPayload = JSON.parse(event.data);
+    if (rawPayload && rawPayload.telemetry) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-        // Standardize Node Addresses as neat, searchable Hex Tokens
-        const idHex = dataFrame.node_id.toString(16).toUpperCase().padStart(2, '0');
-        const instantPowerW = dataFrame.voltage * (dataFrame.currentmA / 1000.0);
-        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const rawTel = rawPayload.telemetry;
 
-        // Synthesize inference logic if downstream pipeline lacks it
-        const fallbackAI: AIInference = dataFrame.ai_insights || {
-          state: dataFrame.humidity > 74 ? "Atmospheric Shifts" : "Nominal Stability",
-          rain_prob: Math.min(100, Math.max(0, parseFloat(((dataFrame.humidity - 50) * 2.5).toFixed(1)))),
-          envelope_high: 35.0,
-          envelope_low: 22.0
-        };
+      // Defensive key map normalization (Checks lower_case from HW, defaults back to PascalCase for Mock fallback)
+      const frame: TelemetryFrame = {
+        Timestamp: timeStr,
+        Voltage: rawTel.voltage !== undefined ? rawTel.voltage : (rawTel.Voltage || 0),
+        Current: rawTel.current !== undefined ? rawTel.current : (rawTel.Current || 0),
+        Temp: rawTel.temp !== undefined ? rawTel.temp : (rawTel.Temp || 0),
+        Humidity: rawTel.humidity !== undefined ? rawTel.humidity : (rawTel.Humidity || 0),
+        Pressure: rawTel.pressure !== undefined ? rawTel.pressure : (rawTel.Pressure || 0),
+        Power_W: 0
+      };
+      
+      // Calculate active wattage from the unified baseline data
+      frame.Power_W = frame.Voltage * frame.Current;
+
+      setCurrentData({ telemetry: frame, ai_insights: rawPayload.ai_insights });
+      setHistory(prev => [...prev, frame].slice(-MAX_HISTORY));
+
+      if (Math.random() > 0.85) {
+        addLog('info', `Telemetry frame processed successfully. V: ${frame.Voltage.toFixed(2)}V`);
+      }
+    }
+  } catch (err) {
+    addLog('critical', `Data serialization structural fault: ${err}`);
+  }
+};
 
         setNodes(prev => {
           const matchedNode = prev[idHex] || {
