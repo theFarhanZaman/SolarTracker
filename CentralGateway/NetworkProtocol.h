@@ -1,51 +1,50 @@
 #pragma once
 #include <Arduino.h>
 
-// =========================================================================
-// UNIFIED NETWORK PACKET DEFINITIONS
-// =========================================================================
-
+// 1. Packet Architecture Type Anchors
 enum PacketType : uint8_t {
-    PACKET_PING_DISCOVERY,
-    PACKET_TELEMETRY,       
-    PACKET_ML_OVERRIDE,     
-    PACKET_ACTION_SYNC      
+    PACKET_TELEMETRY   = 0x01,
+    PACKET_ACTION_SYNC = 0x02,
+    PACKET_ML_OVERRIDE = 0x03
 };
 
-struct __attribute__((packed)) NetworkHeader {
-    uint8_t  sourceID;        // Sender node ID (0x00 = Gateway Hub)
-    uint8_t  packetType;      // Associated PacketType enumeration
-    uint32_t sequenceNumber;  // Monotonically increasing tracking ID
+// 2. Uniform Wireless Packet Header Block
+struct NetworkHeader {
+    uint8_t  sourceID;         // Local identifier tracking origin node
+    uint8_t  packetType;       // Bound signature mapped to PacketType enum
+    uint32_t sequenceNumber;   // Monotonically increasing tracking frame token
 };
 
-struct __attribute__((packed)) SyncPayload {
-    uint32_t targetEpoch;     // Timestamp signature
-    int16_t  masterPanAngle;  // Global alignment target for horizontal axis
-    int16_t  masterTiltAngle; // Global alignment target for vertical axis
+// 3. Concrete Struct Payload Layout Models
+struct TelemetryPayload {
+    float   busVoltage;        // Monitored high-side solar pane bus potential (V)
+    float   currentmA;         // Harvested dynamic load output current profile (mA)
+    float   temperature;       // Thermal footprint reading (°C)
+    float   humidity;          // Atmospheric moisture saturation footprint (%)
+    float   pressure;          // Barometric sensor payload calculation (hPa)
+    int16_t panAngle;          // Active physical horizontal coordinates
+    int16_t tiltAngle;         // Active physical vertical alignment angle
 };
 
-struct __attribute__((packed)) TelemetryPayload {
-    float busVoltage;         // INA226 Solar Panel Voltage
-    float currentmA;          // INA226 Solar Panel Current (mA)
-    float temperature;        // BME280 Ambient Temperature
-    float humidity;           // BME280 Relative Humidity
-    float pressure;           // BME280 Atmospheric Pressure (hPa)
-    int16_t panAngle;         // Current physical position of pan servo
-    int16_t tiltAngle;        // Current physical position of tilt servo
+struct MLOverridePayload {
+    uint8_t  targetID;         // Explicit target execution selector node index
+    uint8_t  structuralMode;   // State engine router (0=Auto, 1=Lock, 2=Expert Bias)
+    int16_t  appliedBiasPan;   // Micro-optimization horizontal step angle deviation
+    int16_t  appliedBiasTilt;  // Micro-optimization vertical step angle deviation
 };
 
-struct __attribute__((packed)) MLOverridePayload {
-    uint8_t  targetID;        // Specific destination address (0xFF = Universal Broadcast Swarm)
-    uint8_t  structuralMode;  // 0 = Autonomous LDR, 1 = Safe Flat Lock, 2 = Remote Expert
-    int16_t  appliedBiasPan;  // Tuning horizontal bias requested by central server
-    int16_t  appliedBiasTilt; // Tuning vertical bias requested by central server
+struct SyncPayload {
+    uint32_t targetEpoch;      // Shared operational baseline coordination timeline
+    int16_t  masterPanAngle;   // Swarm leader tracking anchor coordinate reference
+    int16_t  masterTiltAngle;  // Swarm leader tracking anchor coordinate reference
 };
 
-struct __attribute__((packed)) NetworkPacket {
+// 4. Unified Shared Memory Network Packet Architecture
+struct NetworkPacket {
     NetworkHeader header;
     union {
-        SyncPayload syncData;          
-        TelemetryPayload telemetry;    
-        MLOverridePayload overrideCmd; 
+        TelemetryPayload  telemetry;
+        MLOverridePayload overrideCmd;
+        SyncPayload       syncData;
     } payload;
 };
