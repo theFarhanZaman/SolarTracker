@@ -107,9 +107,13 @@ void loop()
     }
 
     // Async task loop: Print operational dashboard out of USB CDC interface
+   // Async task loop: Print operational dashboard and broadcast machine-parsable JSON
     if (dashboardTimer.expired()) {
         RtcDateTime now = rtc.GetDateTime();
         
+        // ==========================================
+        // 1. LOCAL HUMAN-READABLE SERIAL DIAGNOSTICS
+        // ==========================================
         Serial.printf("\n[NODE TELEMETRY - ID 0x%02X] Timestamp: %02u:%02u:%02u\n", 
                       network.getLocalNodeID(), now.Hour(), now.Minute(), now.Second());
         Serial.printf("ML STATE    : Mode=%d | Active Bias Vector: Pan=%d°, Tilt=%d°\n",
@@ -122,5 +126,28 @@ void loop()
         Serial.printf("ALIGNMENT   : Pan Servo: %d° | Tilt Servo: %d°\n", 
                       panServo.angle, tiltServo.angle);
         Serial.println("--------------------------------------------------------------------------------");
+
+        // ==========================================
+        // 2. BACKEND GATEWAY SERIALIZATION (CRITICAL FOR FASTAPI)
+        // ==========================================
+        // Prefix token "$TELEMETRY;" lets FastAPI filter raw text from machine data strings
+        Serial.print("$TELEMETRY;{");
+        Serial.printf("\"node_id\":%d,",      network.getLocalNodeID());
+        Serial.printf("\"hour\":%02u,",       now.Hour());
+        Serial.printf("\"min\":%02u,",        now.Minute());
+        Serial.printf("\"sec\":%02u,",        now.Second());
+        Serial.printf("\"ml_mode\":%d,",      MLReceiver::mlControlledMode);
+        Serial.printf("\"bias_pan\":%d,",     MLReceiver::mlBiasPan);
+        Serial.printf("\"bias_tilt\":%d,",    MLReceiver::mlBiasTilt);
+        Serial.printf("\"voltage\":%.2f,",    sensors.busVoltage);
+        Serial.printf("\"current\":%.3f,",    sensors.currentmA / 1000.0); // Convert mA to Amperes for UI scaling
+        Serial.printf("\"bat_volt\":%.2f,",   sensors.batteryVoltage);
+        Serial.printf("\"critical\":%s,",     sensors.systemCritical ? "true" : "false");
+        Serial.printf("\"temp\":%.1f,",       sensors.temperature);
+        Serial.printf("\"humidity\":%.1f,",   sensors.humidity);
+        Serial.printf("\"pressure\":%.1f,",   sensors.pressure);
+        Serial.printf("\"pan_angle\":%d,",    panServo.angle);
+        Serial.printf("\"tilt_angle\":%d",     tiltServo.angle);
+        Serial.println("}"); // Closes the JSON syntax and appends a clear newline (\n)
     }
 }
