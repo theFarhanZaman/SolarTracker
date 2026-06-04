@@ -9,7 +9,7 @@ import {
   CartesianGrid, Tooltip, LineChart, Line, Legend
 } from 'recharts';
 
-// Types & Contracts for Telemetry Matrix
+// --- TYPES & CONTRACTS FOR FULL-DUPLEX TELEMETRY MATRIX ---
 interface TelemetryFrame {
   Timestamp: string;
   Voltage: number;
@@ -18,6 +18,9 @@ interface TelemetryFrame {
   Humidity: number;
   Pressure: number;
   Power_W: number;
+  PanAngle: number;   // Tracked tracking orientation
+  TiltAngle: number;  // Tracked tracking orientation
+  NodeID: string;     // Active identifying key
 }
 
 interface AIInsights {
@@ -43,11 +46,20 @@ export default function App() {
 
   // Telemetry Pipelines
   const [currentData, setCurrentData] = useState<{ telemetry: TelemetryFrame; ai_insights: AIInsights }>({
-    telemetry: { Timestamp: '--:--:--', Voltage: 0, Current: 0, Temp: 0, Humidity: 0, Pressure: 0, Power_W: 0 },
+    telemetry: { 
+      Timestamp: '--:--:--', Voltage: 0, Current: 0, Temp: 0, Humidity: 0, Pressure: 0, Power_W: 0,
+      PanAngle: 90, TiltAngle: 0, NodeID: '--'
+    },
     ai_insights: { State: 'Initializing...', Rain_Prob: 0, High: 0, Low: 0 }
   });
   const [history, setHistory] = useState<TelemetryFrame[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  // --- HARDWARE INTERACTION CONTROL STATES ---
+  const [ctrlTargetID, setCtrlTargetID] = useState<number>(255); // 255 = Global Broadcast Swarm
+  const [ctrlMode, setCtrlMode] = useState<number>(0);          // 0 = Auto LDR, 1 = Lock, 2 = Remote Expert
+  const [ctrlBiasPan, setCtrlBiasPan] = useState<number>(0);     // Manual Pan Offset Shift
+  const [ctrlBiasTilt, setCtrlBiasTilt] = useState<number>(0);   // Manual Tilt Offset Shift
 
   // Core Reference Hooks
   const wsRef = useRef<WebSocket | null>(null);
@@ -61,6 +73,26 @@ export default function App() {
       message
     };
     setLogs(prev => [newLog, ...prev].slice(0, 100));
+  };
+
+  // --- BI-DIRECTIONAL COMMAND TRANSMISSION ENGINE ---
+  const sendHardwareCommand = (targetID: number, mode: number, biasPan: number, biasTilt: number) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      // Constructs the structured frame expected by main.py
+      const commandPayload = {
+        targetID: Number(targetID),
+        mode: Number(mode),
+        biasPan: Number(biasPan),
+        biasTilt: Number(biasTilt)
+      };
+
+      // Dispatches raw JSON string across open WebSocket line
+      wsRef.current.send(JSON.stringify(commandPayload));
+      
+      addLog('success', `Command matrix flushed down-pipe: Node ${targetID === 255 ? 'ALL' : targetID} -> Mode ${mode} [Pan Bias: ${biasPan}°, Tilt Bias: ${biasTilt}°]`);
+    } else {
+      addLog('critical', 'Transmission Aborted: Active hardware gateway websocket channel is offline.');
+    }
   };
 
   // Full Dual-Mode Full-Duplex Connection Engine
@@ -89,14 +121,18 @@ export default function App() {
             const frame: TelemetryFrame = {
               ...rawPayload.telemetry,
               Timestamp: timeStr,
-              Power_W: rawPayload.telemetry.Voltage * rawPayload.telemetry.Current
+              Power_W: rawPayload.telemetry.Voltage * rawPayload.telemetry.Current,
+              // Safe fallbacks to prevent rendering faults if keys drop
+              PanAngle: rawPayload.telemetry.PanAngle ?? 90,
+              TiltAngle: rawPayload.telemetry.TiltAngle ?? 0,
+              NodeID: rawPayload.telemetry.NodeID ?? '--'
             };
 
             setCurrentData({ telemetry: frame, ai_insights: rawPayload.ai_insights });
             setHistory(prev => [...prev, frame].slice(-MAX_HISTORY));
 
-            if (Math.random() > 0.85) {
-              addLog('info', `Telemetry frame processed successfully. V: ${frame.Voltage.toFixed(2)}V`);
+            if (Math.random() > 0.90) {
+              addLog('info', `Telemetry processed from Node ${frame.NodeID}. System Gen: ${frame.Power_W.toFixed(2)}W`);
             }
           }
         } catch (err) {
@@ -108,7 +144,6 @@ export default function App() {
         setStatus('Disconnected');
         addLog('warn', 'Hardware socket offline. Activating UI Mock Simulation Engine...');
 
-        // Visual Fallback Loop: Simulates active stream inside the UI directly
         mockInterval = setInterval(() => {
           const now = new Date();
           const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -120,7 +155,10 @@ export default function App() {
             Temp: 28.2 + Math.sin(now.getTime() / 20000) * 0.8 + Math.random() * 0.2,
             Humidity: 71.5 + Math.cos(now.getTime() / 12000) * 4.0,
             Pressure: 1009.4 + Math.random() * 0.3,
-            Power_W: 0
+            Power_W: 0,
+            PanAngle: Math.floor(90 + Math.sin(now.getTime() / 10000) * 25),
+            TiltAngle: Math.floor(15 + Math.cos(now.getTime() / 10000) * 10),
+            NodeID: "SIM-42"
           };
           mockTelemetry.Power_W = mockTelemetry.Voltage * mockTelemetry.Current;
 
@@ -151,7 +189,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-
+      
       {/* Top Global Command Bar Header */}
       <header className="border-b border-slate-900 bg-slate-900/40 backdrop-blur px-6 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-3">
@@ -160,30 +198,36 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-tight text-white">Sky-Link Core Gateway</h1>
-            <p className="text-xs text-slate-400 font-mono">NODE-ID: SL-NODE-01 // DHAKA_EAST</p>
+            <p className="text-xs text-slate-400 font-mono">
+              ACTIVE SOURCE: <span className="text-indigo-400 font-bold">NODE-{currentData.telemetry.NodeID}</span> // DHAKA_EAST
+            </p>
           </div>
         </div>
 
         {/* Global Navigation Matrix */}
         <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 gap-1">
+          {/* Dashboard Button */}
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'}`}
           >
             <LayoutDashboard className="w-3.5 h-3.5" /> Dashboard
           </button>
+          {/* Analytics Button */}
           <button
             onClick={() => setActiveTab('analytics')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 ${activeTab === 'analytics' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'}`}
           >
             <BarChart3 className="w-3.5 h-3.5" /> Data Analytics
           </button>
+          {/* Controls Button */}
           <button
             onClick={() => setActiveTab('controls')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 ${activeTab === 'controls' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'}`}
           >
             <Sliders className="w-3.5 h-3.5" /> Control Matrix
           </button>
+          {/* Logs Button */}
           <button
             onClick={() => setActiveTab('logs')}
             className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'}`}
@@ -292,24 +336,29 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Advanced Local Intelligence Metrics Box */}
+              {/* Advanced Local Intelligence & Spatial Vectors Card */}
               <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex flex-col justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white tracking-wide mb-3 flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-indigo-400" /> Embedded Inference Insights
+                    <Cpu className="w-4 h-4 text-indigo-400" /> System Metrics & Vectors
                   </h2>
                   <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs space-y-2.5">
-                    <div className="flex justify-between border-b border-slate-900 pb-2">
-                      <span className="text-slate-500">ML Model:</span>
-                      <span className="text-slate-300">TinyML Edge Forest v4</span>
-                    </div>
                     <div className="flex justify-between border-b border-slate-900 pb-2">
                       <span className="text-slate-500">Environmental State:</span>
                       <span className="text-indigo-400 font-bold">{currentData.ai_insights.State}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Local Precipitation Prob:</span>
+                    <div className="flex justify-between border-b border-slate-900 pb-2">
+                      <span className="text-slate-500">Precipitation Prob:</span>
                       <span className="text-emerald-400">{currentData.ai_insights.Rain_Prob}%</span>
+                    </div>
+                    {/* Live Vector Tracking Readouts */}
+                    <div className="flex justify-between border-b border-slate-900 pb-2">
+                      <span className="text-slate-500">Current Pan Gimbal:</span>
+                      <span className="text-amber-400 font-bold">{currentData.telemetry.PanAngle}°</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Current Tilt Gimbal:</span>
+                      <span className="text-amber-400 font-bold">{currentData.telemetry.TiltAngle}°</span>
                     </div>
                   </div>
                 </div>
@@ -322,7 +371,7 @@ export default function App() {
                   <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
                     <div
                       className="bg-indigo-500 h-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, (currentData.telemetry.Temp / currentData.ai_insights.High) * 100)}%` }}
+                      style={{ width: `${Math.min(100, (currentData.telemetry.Temp / (currentData.ai_insights.High || 1)) * 100)}%` }}
                     />
                   </div>
                 </div>
@@ -361,45 +410,100 @@ export default function App() {
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl space-y-6">
             <div>
               <h2 className="text-md font-bold text-white flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-indigo-400" /> Gateway Registry Setpoints
+                <Sliders className="w-5 h-5 text-indigo-400" /> Gateway Registry Overrides
               </h2>
-              <p className="text-xs text-slate-400">Issue downstream config variables to the telemetry node controllers</p>
+              <p className="text-xs text-slate-400">Issue direct spatial orientations and configurations down to the array network</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Target & Mode Selection Matrix */}
               <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                  <Radio className="w-3.5 h-3.5 text-indigo-400" /> Transmission Controls
+                  <Cpu className="w-3.5 h-3.5 text-indigo-400" /> Target Configuration
                 </h3>
-                <div className="space-y-2">
-                  <label className="text-xs text-slate-400 block">Telemetry Push Interval (ms)</label>
-                  <input type="range" min="100" max="5000" defaultValue="1000" className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-                  <div className="flex justify-between text-xs text-slate-500 font-mono">
-                    <span>100ms</span>
-                    <span>5000ms</span>
+                
+                {/* 1. Target ID Field Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 block">Target Field Tracker ID</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number" 
+                      min="0" 
+                      max="255"
+                      value={ctrlTargetID}
+                      onChange={(e) => setCtrlTargetID(Number(e.target.value))}
+                      className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white w-24 focus:outline-none focus:border-indigo-500"
+                    />
+                    <button 
+                      onClick={() => setCtrlTargetID(255)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold font-mono transition-all border ${ctrlTargetID === 255 ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'}`}
+                    >
+                      Universal Broadcast (255)
+                    </button>
                   </div>
+                </div>
+
+                {/* 2. Operational Mode Selection Flag */}
+                <div className="space-y-1.5 pt-2">
+                  <label className="text-xs text-slate-400 block">Gimbal Mode Protocol</label>
+                  <select 
+                    value={ctrlMode} 
+                    onChange={(e) => setCtrlMode(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value={0}>Mode 0: Autonomous Algorithmic LDR Tracking</option>
+                    <option value={1}>Mode 1: High-Wind Emergency Mechanical Lock</option>
+                    <option value={2}>Mode 2: Remote Expert Predictive Micro-Bias Override</option>
+                  </select>
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                  <Settings className="w-3.5 h-3.5 text-indigo-400" /> Safety Interlocks
-                </h3>
-                <div className="flex justify-between items-center py-2 border-b border-slate-900">
-                  <div>
-                    <p className="text-xs font-medium text-slate-300">Overcurrent Hardware Auto-Trip</p>
-                    <p className="text-[10px] text-slate-500">Safely open relays if draw hits &gt; 1.5A</p>
+              {/* Dynamic Offset Adjustment Sliders */}
+              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <Settings className="w-3.5 h-3.5 text-indigo-400" /> Correction Biases
+                  </h3>
+                  
+                  {/* Pan Adjust Slider */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-slate-400">Horizontal Pan Bias</span>
+                      <span className={ctrlBiasPan >= 0 ? "text-emerald-400" : "text-rose-400"}>{ctrlBiasPan}°</span>
+                    </div>
+                    <input 
+                      type="range" min="-45" max="45" 
+                      value={ctrlBiasPan} 
+                      onChange={(e) => setCtrlBiasPan(Number(e.target.value))}
+                      className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer" 
+                    />
                   </div>
-                  <button className="p-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-lg"><Power className="w-4 h-4" /></button>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <div>
-                    <p className="text-xs font-medium text-slate-300">Local SD Telemetry Flash Dump</p>
-                    <p className="text-[10px] text-slate-500">Sync backup tracking storage locally</p>
+
+                  {/* Tilt Adjust Slider */}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-slate-400">Vertical Tilt Bias</span>
+                      <span className={ctrlBiasTilt >= 0 ? "text-emerald-400" : "text-rose-400"}>{ctrlBiasTilt}°</span>
+                    </div>
+                    <input 
+                      type="range" min="-45" max="45" 
+                      value={ctrlBiasTilt} 
+                      onChange={(e) => setCtrlBiasTilt(Number(e.target.value))}
+                      className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer" 
+                    />
                   </div>
-                  <button className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 rounded-lg text-[11px] font-semibold flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Sync</button>
                 </div>
+
+                {/* Dispatch Trigger Execution Button */}
+                <button
+                  onClick={() => sendHardwareCommand(ctrlTargetID, ctrlMode, ctrlBiasPan, ctrlBiasTilt)}
+                  className="w-full py-2.5 mt-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold tracking-wide transition-all shadow-lg shadow-indigo-600/10 flex items-center justify-center gap-2"
+                >
+                  <Power className="w-4 h-4" /> Transmit Command Packet Frame
+                </button>
               </div>
+
             </div>
           </div>
         )}
