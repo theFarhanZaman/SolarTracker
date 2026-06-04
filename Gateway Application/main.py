@@ -26,23 +26,27 @@ ESP32S3_VID = 0x303A
 ESP32S3_PID = 0x1001
 DATA_FILE = "wsn_telemetry_history.csv"
 
-# --- GLOBAL INTER-THREAD STATE ENGINE ---
+# =====================================================================
+# GLOBAL INTER-THREAD STATE ENGINE (THREAD-SAFE / MULTI-SUBSCRIBER)
+# =====================================================================
 class GlobalState:
     def __init__(self):
         self.latest_payload = {
             "telemetry": {
-                "Voltage": 0.0, "Current": 0.0, "Temp": 0.0, "Humidity": 0.0, "Pressure": 0.0
+                "Voltage": 0.0, "Current": 0.0, "Temp": 0.0, "Humidity": 0.0, "Pressure": 0.0,
+                "PanAngle": 90, "TiltAngle": 0, "NodeID": "00"
             },
             "ai_insights": {
                 "State": "Initializing", "Rain_Prob": 0.0, "High": 0.0, "Low": 0.0
             }
         }
         self.hardware_status = "Searching for ESP32-S3 Gateway..."
-        self.new_data_event = threading.Event()  # Signals async loop from OS thread
+        self.loop = None          # Captures execution context loop pointer for cross-thread scheduling
+        self.active_queues = set() # Non-blocking subscription manager registry
         self.lock = threading.Lock()
 
 state_engine = GlobalState()
-hardware_command_queue = queue.Queue()  # Thread-safe pipeline for UI -> HW commands
+hardware_command_queue = queue.Queue()  # UI -> HW Downstream Communication Pipeline
 
 # =====================================================================
 # 1. MACHINE LEARNING ENGINE ARCHITECTURE
@@ -136,7 +140,7 @@ class WSNIntelligenceHub:
 # 2. BIDIRECTIONAL HARDWARE INTERFACE ENGINE (BACKGROUND OS THREAD)
 # =====================================================================
 def hardware_serial_worker(hub: WSNIntelligenceHub):
-    """Monitors, reads telemetry from, and writes commands to the physical ESP32-S3."""
+    """Monitors, reads telemetry from, and writes structured commands to the physical central gateway."""
     while True:
         ports = serial.tools.list_ports.comports()
         target_port = next((p.device for p in ports if p.vid == ESP32S3_VID and p.pid == ESP32S3_PID), None)
@@ -149,31 +153,45 @@ def hardware_serial_worker(hub: WSNIntelligenceHub):
                 ser.reset_output_buffer()
 
                 while True:
-                    # --- 1. TELEMETRY INGRESS (READ) ---
+                    # --- 1. TELEMETRY INGRESS (READ & AI INFERENCE) ---
                     if ser.in_waiting > 0:
                         raw_line = ser.readline().decode('utf-8', errors='ignore').strip()
                         if raw_line.startswith("DATA"):
                             parts = raw_line.split(',')
                             if len(parts) >= 7:
                                 try:
+                                    # Normalization: Convert currentmA to Amps to protect model scaler alignment
                                     metrics = {
                                         "Voltage": float(parts[2]),
-                                        "Current": float(parts[3]),
+                                        "Current": float(parts[3]) / 1000.0, 
                                         "Temp": float(parts[4]),
                                         "Humidity": float(parts[5]),
                                         "Pressure": float(parts[6])
                                     }
+                                    
+                                    # Extract structural tracking configuration properties safely
+                                    pan_angle = int(parts[7]) if len(parts) >= 9 else 90
+                                    tilt_angle = int(parts[8]) if len(parts) >= 9 else 0
+                                    node_id = parts[1]
+
                                     ai_insights = hub.execute_inference(metrics)
 
                                     with state_engine.lock:
                                         state_engine.latest_payload = {
-                                            "telemetry": metrics,
+                                            "telemetry": {
+                                                **metrics,
+                                                "PanAngle": pan_angle,
+                                                "TiltAngle": tilt_angle,
+                                                "NodeID": node_id
+                                            },
                                             "ai_insights": ai_insights
                                         }
                                         state_engine.hardware_status = "Live"
 
-                                    # Release async wait loops simultaneously
-                                    state_engine.new_data_event.set()
+                                        # Thread-Safe Non-Blocking Broadcast implementation to active websocket loops
+                                        if state_engine.loop and state_engine.loop.is_running():
+                                            for q in list(state_engine.active_queues):
+                                                state_engine.loop.call_soon_threadsafe(q.put_nowait, state_engine.latest_payload)
 
                                     with open(DATA_FILE, 'a', newline='') as f:
                                         writer = csv.writer(f)
@@ -181,13 +199,18 @@ def hardware_serial_worker(hub: WSNIntelligenceHub):
                                 except (ValueError, IndexError):
                                     continue
 
-                    # --- 2. COMMAND EGRESS (WRITE) ---
+                    # --- 2. COMMAND EGRESS (COMPRESSED SERIAL FORM FACTOR) ---
                     try:
                         cmd_packet = hardware_command_queue.get_nowait()
-                        action = cmd_packet.get("action")
-                        value = cmd_packet.get("value")
+                        
+                        # Unpack targeted control matrices to map the exact Arduino substring structure
+                        target_id = cmd_packet.get("targetID", 0xFF)       # 0xFF = Broadcast Swarm
+                        mode      = cmd_packet.get("mode", 0)               # 0 = Local Algorithmic LDR
+                        bias_pan  = cmd_packet.get("biasPan", 0)            # Horizontal offset shift
+                        bias_tilt = cmd_packet.get("biasTilt", 0)           # Vertical offset shift
 
-                        serial_cmd = f"CMD,{action},{value}\n"
+                        # Emits exactly 4 commas following CMD key, checking all Arduino verification indices
+                        serial_cmd = f"CMD,{target_id},{mode},{bias_pan},{bias_tilt}\n"
                         ser.write(serial_cmd.encode('utf-8'))
                         ser.flush()
                         print(f"[HARDWARE OUTBOUND] Flushed downstream: {serial_cmd.strip()}")
@@ -212,8 +235,10 @@ def hardware_serial_worker(hub: WSNIntelligenceHub):
 # =====================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles thread generation and memory lifecycle safely on startup/shutdown."""
+    """Handles thread lifecycle and locks loop reference to cross sync/async boundaries."""
     ai_hub = WSNIntelligenceHub()
+    state_engine.loop = asyncio.get_running_loop() # Thread reference lock
+    
     worker_thread = threading.Thread(target=hardware_serial_worker, args=(ai_hub,), daemon=True)
     worker_thread.start()
     print("[SYSTEM] Background hardware abstraction layer successfully spawned via Lifespan.")
@@ -244,23 +269,28 @@ async def health_check():
 
 @app.websocket("/ws/telemetry")
 async def websocket_telemetry_stream(websocket: WebSocket):
-    """Establishes full-duplex non-blocking channel to push metrics and ingest UI controls."""
+    """Establishes full-duplex non-blocking channel to push metrics and ingest UI controls safely."""
     await websocket.accept()
     print(f"[WEBSOCKET] Frontend UI Client connected from {websocket.client.host}")
 
+    # Register an isolated queue for this individual connection frame
+    client_queue = asyncio.Queue()
+    with state_engine.lock:
+        state_engine.active_queues.add(client_queue)
+        initial_cache = state_engine.latest_payload
+    
+    # Immediately feed current matrix history on handshake completion
+    await websocket.send_json(initial_cache)
+
     async def send_handler():
-        with state_engine.lock:
-            await websocket.send_json(state_engine.latest_payload)
-
-        loop = asyncio.get_running_loop()
-        while True:
-            # Offloads native thread waiting to threadpool, eliminating CPU spin logs completely
-            await loop.run_in_executor(None, state_engine.new_data_event.wait)
-            state_engine.new_data_event.clear()
-
-            with state_engine.lock:
-                payload = state_engine.latest_payload
-            await websocket.send_json(payload)
+        try:
+            while True:
+                # Thread-safe pipeline feeds this block instantly upon serial interrupt matches
+                payload = await client_queue.get()
+                await websocket.send_json(payload)
+                client_queue.task_done()
+        except asyncio.CancelledError:
+            pass
 
     async def receive_handler():
         try:
@@ -275,5 +305,6 @@ async def websocket_telemetry_stream(websocket: WebSocket):
         await asyncio.gather(send_handler(), receive_handler())
     except WebSocketDisconnect:
         print(f"[WEBSOCKET] Client browser session disconnected cleanly.")
-    except Exception as e:
-        print(f"[WEBSOCKET ERROR] Stream exception handled: {e}")
+    finally:
+        with state_engine.lock:
+            state_engine.active_queues.discard(client_queue)
