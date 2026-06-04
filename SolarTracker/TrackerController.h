@@ -6,6 +6,9 @@
 #include "TrackerNetManager.h"
 #include "NetworkProtocol.h"
 
+// Define the designated Master Node ID for the swarm to prevent broadcast storms
+#define MASTER_NODE_ID 0x01 
+
 class TrackerController
 {
 private:
@@ -41,7 +44,7 @@ public:
             return;
         }
 
-        // 2. Cooperative Network Synchronization Overrides
+        // 2. Cooperative Network Synchronization Overrides (Worker Node Behavior)
         if (net.hasPendingSync)
         {
             net.hasPendingSync = false; 
@@ -70,8 +73,9 @@ public:
             moved = true;
         }
 
-        // 4. Peer Broadcast Latch
-        if (moved)
+        // 4. Peer Broadcast Latch (Master Node Behavior Only)
+        // Prevents 2.4GHz ESP-NOW packet collision storms by ensuring only the designated swarm leader broadcasts sync commands.
+        if (moved && net.getLocalNodeID() == MASTER_NODE_ID)
         {
             cooldownStart = millis();
 
