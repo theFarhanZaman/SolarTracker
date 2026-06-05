@@ -6,8 +6,8 @@
 #include "GatewayDisplay.h" // <-- NEW: Include Display Module
 
 // --- Gateway Display & Tracking State ---
-#define I2C_SDA_PIN 21 // Standard ESP32 I2C SDA
-#define I2C_SCL_PIN 22 // Standard ESP32 I2C SCL
+#define I2C_SDA_PIN 9 // Standard ESP32 I2C SDA
+#define I2C_SCL_PIN 8 // Standard ESP32 I2C SCL
 
 GatewayDisplayManager gatewayUI;
 volatile uint32_t lastSeenMatrix[256] = {0}; // Tracks the last millis() epoch each sourceID was seen
