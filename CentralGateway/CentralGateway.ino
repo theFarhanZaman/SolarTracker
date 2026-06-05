@@ -31,7 +31,7 @@ void setup() {
     // Defensive Field Timeout: Prevents permanent locking if booting headless in production
     uint32_t startTime = millis();
     while (!Serial) {
-        if (millis() - startTime > 4000) break; 
+        if (millis() - startTime > 30000) break; 
         delay(10);
     }
 
