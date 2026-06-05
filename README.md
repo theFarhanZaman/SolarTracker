@@ -55,7 +55,9 @@ The platform separates execution into three distinct isolated domains: **Edge Ac
 
 ## ⚡ Hardware Realization & Verified Pinouts
 
-This deployment is optimized strictly for the **ESP32-S3 Supermini Edge Headers** (all assignments ≤ GPIO 13). Analog sensors and the I2C bus are segregated down the Left Rail, while mechanical PWM lines run down the Right Rail to eliminate electromagnetic cross-coupling.
+> **⚠️ CRITICAL HARDWARE SPECIFICATION:** This deployment is optimized strictly for the **ESP32-S3 Supermini Edge Headers** where all assignments remain bound below **GPIO 13**. To minimize electromagnetic cross-coupling and maintain clear tracing, the infrastructure segregates analog input sensors and the I2C bus down the Left Rail, while routing mechanical PWM control and high-speed clock timing lines down the Right Rail.
+> ![ESP32-S3 Supermini Verified Pinout Diagram](Assets/esp32_s3_supermini_pinout.jpg)
+
 
 ### Core Pin Allocation Ledger
 
@@ -75,10 +77,35 @@ This deployment is optimized strictly for the **ESP32-S3 Supermini Edge Headers*
 | **DS1302 RTC** | Serial Clock (CLK) | **GPIO 13** | Timing Clock Pulse |
 
 ---
+## 📋 Master Pin Connection & Netlist Table
+
+| From Component Pin | To Component Pin | Wire Specification | Net Type / Signal Role |
+| :--- | :--- | :--- | :--- |
+| **Solar Panel (+)** | INA219 Terminal `IN+` | 30 AWG Single Core | Raw Harvest VCC Ingest |
+| **INA219 Terminal `IN-`** | SE9018 Module `IN+` | 30 AWG Single Core | Monitored Charge Path |
+| **Solar Panel (-)** | SE9018 Module `IN-` | 30 AWG Single Core | Panel Ground Return |
+| **SE9018 `BAT+`** | 1S LiPo (+) & Boost `VIN+` | 30 AWG Single Core | Raw Battery Voltage Potentials |
+| **SE9018 `GND-`** | 1S LiPo (-) & Boost `VIN-` | 3x Twisted 30 AWG | **Master Ground Node** |
+| **Boost Converter `VOUT+`**| ESP32 `5V` & Servo `VCC` | 2x Twisted 30 AWG | **Regulated 5V Rail** |
+| **Boost Converter `VOUT-`**| Master Ground Trunk | 3x Twisted 30 AWG | Main Ground System Sink |
+| **ESP32-S3 `3V3`** | Sensors, RTC, LDR Matrix | 30 AWG Single Core | **Clean 3.3V Logic Bus** |
+| **ESP32-S3 `GND`** | Master Ground Trunk | 30 AWG Single Core | MCU Ground Reference |
+| **ESP32-S3 `GPIO 1`** | Top-Left LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH0) |
+| **ESP32-S3 `GPIO 2`** | Top-Right LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH1) |
+| **ESP32-S3 `GPIO 3`** | Bottom-Left LDR Divider Node | 30 AWG Single Core | Analog Input (ADC1_CH2) |
+| **ESP32-S3 `GPIO 4`** | Bottom-Right LDR Divider Node| 30 AWG Single Core | Analog Input (ADC1_CH3) |
+| **ESP32-S3 `GPIO 5`** | 10k/10k LiPo Attenuation Node| 30 AWG Single Core | Analog Input (Battery Health) |
+| **ESP32-S3 `GPIO 6`** | INA219 / BMP280 / MPU6050 / Display `SDA` | 30 AWG Single Core | I2C Synchronous Data Line |
+| **ESP32-S3 `GPIO 7`** | INA219 / BMP280 / MPU6050 / Display `SCL` | 30 AWG Single Core | I2C Synchronous Clock Line |
+| **ESP32-S3 `GPIO 8`** | Pan Servo Signal Wire (Orange) | 30 AWG Single Core | 50Hz PWM Actuation Vector |
+| **ESP32-S3 `GPIO 9`** | Tilt Servo Signal Wire (Orange)| 30 AWG Single Core | 50Hz PWM Actuation Vector |
+| **ESP32-S3 `GPIO 11`**| DS1302 Module `RST` | 30 AWG Single Core | Chip Select Latch Line |
+| **ESP32-S3 `GPIO 12`**| DS1302 Module `DAT` | 30 AWG Single Core | 3-Wire Serial Data Stream |
+| **ESP32-S3 `GPIO 13`**| DS1302 Module `CLK` | 30 AWG Single Core | Serial Clock Timing Train |
 
 ## 🔋 Power Management & Safety Architecture
 
-To guarantee long-term operational survival in remote field environments, the power architecture relies on a decoupled, dual-rail distribution matrix. High-current inductive loads (servos) are isolated from high-precision instrumentation circuits to prevent voltage sags from generating calculation drift.
+To guarantee long-term operational survival in remote field environments, the power architecture relies on a decoupled, dual-rail distribution matrix. High-current inductive loads (servos) are isolated from high-precision instrumentation circuits to prevent voltage sags that could cause calculation drift.
 
 ### 1. High-Side Isolation Tracking
 The solar panel energy pathway is routed through an **INA226 Bi-Directional Current/Power Monitor** before interfacing with the charging regulators. Ground references are coupled at a single star-point to mitigate ground bounce during mechanical motor acceleration.
