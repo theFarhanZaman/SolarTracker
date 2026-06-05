@@ -12,6 +12,7 @@
 #include "NetworkProtocol.h"
 #include "TrackerNetManager.h"
 #include "EdgeNodeReceiver.h"  // Dynamic ML processing & control arbitration matrix
+#include "DisplayManager.h"    // OLED Display Manager subsystem
 
 /***********************************************************************
     VERIFIED HIGH-ACCURACY PIN ALLOCATIONS (STRICTLY <= GPIO 13)
@@ -44,7 +45,9 @@ SolarSensor solar(LDR_TOP_LEFT_PIN, LDR_TOP_RIGHT_PIN, LDR_BOTTOM_LEFT_PIN, LDR_
 ManagedServo panServo(PAN_SERVO_PIN);
 ManagedServo tiltServo(TILT_SERVO_PIN);
 TrackerController tracker(panServo, tiltServo, sensors);
-TrackerNetManager network; 
+TrackerNetManager network;
+
+DisplayManager oledDisplay; // Instantiate the OLED display manager
 
 // Non-blocking task execution schedule mappings
 SoftTimer sensorTimer(1000);       // Sample ambient sensors at 1Hz
@@ -86,6 +89,11 @@ void setup()
         Serial.println("[WARNING] Peripheral communication anomaly detected on I2C bus.");
     }
 
+    // Initialize OLED Display (Must happen after sensors.init() which starts the Wire bus)
+    if (!oledDisplay.init()) {
+        Serial.println("[WARNING] OLED allocation failed - check I2C address or pullups.");
+    }
+
     // Secure Timekeeping Synchronization
     rtc.Begin();
     if (!rtc.IsDateTimeValid()) {
@@ -109,6 +117,9 @@ void loop()
     if (sensorTimer.expired()) {
         sensors.update();
         latestSolar = solar.read();
+        
+        // Refresh local OLED matrix non-blockingly
+        oledDisplay.update(sensors.powerW, sensors.temperature, sensors.humidity, sensors.pressure);
     }
 
     // Async task loop: Evaluate tracking decision hierarchy using ML arbitration mapping
@@ -150,7 +161,7 @@ void loop()
         telemetryPacket.payload.telemetry.tiltAngle   = (int16_t)tiltServo.angle;
 
         // Broadcast the binary block over the air to the Central Gateway Base Station Hub
-        uint8_t targetGatewayMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; 
+        uint8_t targetGatewayMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
         esp_err_t sendResult = esp_now_send(targetGatewayMac, (uint8_t *)&telemetryPacket, sizeof(NetworkPacket));
         
         if (sendResult != ESP_OK) {
