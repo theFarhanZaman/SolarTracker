@@ -3,9 +3,10 @@
 
 // 1. Packet Architecture Type Anchors
 enum PacketType : uint8_t {
-    PACKET_TELEMETRY   = 0x01,
-    PACKET_ACTION_SYNC = 0x02,
-    PACKET_ML_OVERRIDE = 0x03
+    PACKET_PING_DISCOVERY,
+    PACKET_TELEMETRY,
+    PACKET_ML_OVERRIDE,
+    PACKET_ACTION_SYNC
 };
 
 // 2. Uniform Wireless Packet Header Block
