@@ -1,7 +1,7 @@
 #include <Wire.h>
 #include <ThreeWire.h>
 #include <RtcDS1302.h>
-#include <esp_wifi.h> // Required for hardware-level Wi-Fi channel forcing
+#include <esp_wifi.h> 
 
 // Modular Framework Extensions
 #include "SoftTimer.h"
@@ -47,7 +47,7 @@ ManagedServo tiltServo(TILT_SERVO_PIN);
 TrackerController tracker(panServo, tiltServo, sensors);
 TrackerNetManager network;
 
-DisplayManager oledDisplay; // Instantiate the OLED display manager
+DisplayManager oledDisplay; 
 
 // Non-blocking task execution schedule mappings
 SoftTimer sensorTimer(1000);       // Sample ambient sensors at 1Hz
@@ -65,36 +65,35 @@ void setup()
     Serial.println("[BOOT] Initializing Synchronized Distributed WSN Node... ");
     Serial.println("========================================================");
 
-    // Spin up Peer Network Protocols
+    // 1. Spin up Peer Network Protocols (Delegated entirely to TrackerNetManager)
     if (network.begin()) {
         Serial.printf("[NET] Node Active. Dynamic Address Matrix Key: ID [0x%02X]\n", network.getLocalNodeID());
-        
-        // Explicitly lock the underlying Wi-Fi radio to Channel 1 to match the Gateway
-        esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-        Serial.println("[NET] Radio RF interface locked securely to Channel 1.");
-
-        // Register the dynamic ML processing function inside the active ESP-NOW intercept stack
-        esp_now_register_recv_cb(MLReceiver::OnDataRecv);
+        Serial.println("[NET] RF Interface and Callback Stack successfully delegated to NetManager.");
     } else {
-        Serial.println("[CRITICAL] ESP-NOW Communications stack failure.");
+        Serial.println("[CRITICAL] ESP-NOW Communications stack failure. Halting network ops.");
     }
 
-    // Hardware Peripheral Initialization
+    // 2. Hardware Peripheral Initialization
     solar.begin();
     panServo.begin();
     tiltServo.begin();
 
-    // Verify I2C Bus Stability (INA226 / BME280 / MPU6050)
+    // 3. Verify I2C Bus Stability (INA226 / BME280 / MPU6050)
+    // NOTE: This now explicitly flags a failure so you don't get stuck debugging dead sensors
     if (!sensors.init()) {
-        Serial.println("[WARNING] Peripheral communication anomaly detected on I2C bus.");
+        Serial.println("========================================================");
+        Serial.println("[HARDWARE FAULT] I2C Peripheral initialization failed!");
+        Serial.println("-> Check BME280/INA226 wiring, 3.3V power, and 4.7k pull-up resistors.");
+        Serial.println("-> System will continue, but sensor data will reflect static defaults.");
+        Serial.println("========================================================");
     }
 
-    // Initialize OLED Display (Must happen after sensors.init() which starts the Wire bus)
+    // 4. Initialize OLED Display (Must happen after sensors.init() which starts the Wire bus)
     if (!oledDisplay.init()) {
         Serial.println("[WARNING] OLED allocation failed - check I2C address or pullups.");
     }
 
-    // Secure Timekeeping Synchronization
+    // 5. Secure Timekeeping Synchronization
     rtc.Begin();
     if (!rtc.IsDateTimeValid()) {
         Serial.println("[RTC] Hardware clock invalid. Compiling structural defaults...");
