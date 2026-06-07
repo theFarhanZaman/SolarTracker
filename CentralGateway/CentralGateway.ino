@@ -1,147 +1,386 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <Wire.h>
-#include "NetworkProtocol.h"
-#include "GatewayDisplay.h" // <-- NEW: Include Display Module
 
-// --- Gateway Display & Tracking State ---
-#define I2C_SDA_PIN 9 // Standard ESP32 I2C SDA
-#define I2C_SCL_PIN 8 // Standard ESP32 I2C SCL
+#include "NetworkProtocol.h"
+#include "GatewayDisplay.h"
+
+#define I2C_SDA_PIN 9
+#define I2C_SCL_PIN 8
+
+#define WSN_COMM_CHANNEL 1
+#define NODE_TIMEOUT_MS 15000
 
 GatewayDisplayManager gatewayUI;
-volatile uint32_t lastSeenMatrix[256] = {0}; // Tracks the last millis() epoch each sourceID was seen
 
-uint32_t gatewaySeqCount = 0;
-uint8_t broadcastAddress[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static uint32_t lastSeenMatrix[256] = {0};
+static uint32_t lastSequenceSeen[256] = {0};
 
-// Fixed Signatures for ESP32 Core v3.x compatibility
-void OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len);
-void OnDataSent(const wifi_tx_info_t *txInfo, esp_now_send_status_t status);
+static uint32_t gatewaySeqCount = 0;
 
-void setup() {
-    Serial.begin(921600);
-    
-    // Initialize I2C and OLED
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    if (!gatewayUI.init()) {
-        Serial.println("STATUS,WARN,OLED_INIT_FAILED");
+static uint32_t packetsReceived = 0;
+static uint32_t packetsSent = 0;
+static uint32_t packetsDropped = 0;
+
+static uint8_t activeNodeCount = 0;
+
+static uint8_t broadcastAddress[6] =
+{
+    0xFF,0xFF,0xFF,
+    0xFF,0xFF,0xFF
+};
+
+void OnDataRecv(
+    const esp_now_recv_info *recvInfo,
+    const uint8_t *incomingData,
+    int len);
+
+void OnDataSent(
+    const wifi_tx_info_t *txInfo,
+    esp_now_send_status_t status);
+
+static bool registerPeer(
+    const uint8_t* mac)
+{
+    if (esp_now_is_peer_exist(mac))
+    {
+        return true;
     }
 
-    // Defensive Field Timeout: Prevents permanent locking if booting headless in production
+    esp_now_peer_info_t peer = {};
+
+    memcpy(peer.peer_addr, mac, 6);
+
+    peer.channel = WSN_COMM_CHANNEL;
+    peer.encrypt = false;
+
+    return (
+        esp_now_add_peer(&peer)
+        == ESP_OK
+    );
+}
+
+static bool initializeEspNow()
+{
+    WiFi.mode(WIFI_STA);
+
+    WiFi.disconnect(true, true);
+
+    delay(100);
+
+    esp_wifi_set_promiscuous(true);
+
+    esp_wifi_set_channel(
+        WSN_COMM_CHANNEL,
+        WIFI_SECOND_CHAN_NONE);
+
+    esp_wifi_set_promiscuous(false);
+
+    if (esp_now_init() != ESP_OK)
+    {
+        return false;
+    }
+
+    esp_now_register_recv_cb(
+        OnDataRecv);
+
+    esp_now_register_send_cb(
+        OnDataSent);
+
+    esp_now_peer_info_t peer = {};
+
+    memcpy(
+        peer.peer_addr,
+        broadcastAddress,
+        6);
+
+    peer.channel =
+        WSN_COMM_CHANNEL;
+
+    peer.encrypt = false;
+
+    if (!esp_now_is_peer_exist(
+            broadcastAddress))
+    {
+        esp_now_add_peer(&peer);
+    }
+
+    return true;
+}
+
+static uint8_t computeActiveNodes()
+{
+    uint32_t now = millis();
+
+    uint8_t count = 0;
+
+    for (int i = 0; i < 256; i++)
+    {
+        if (
+            lastSeenMatrix[i] != 0 &&
+            (now - lastSeenMatrix[i])
+                < NODE_TIMEOUT_MS
+        )
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+void setup()
+{
+    Serial.begin(921600);
+
+    Wire.begin(
+        I2C_SDA_PIN,
+        I2C_SCL_PIN);
+
+    if (!gatewayUI.init())
+    {
+        Serial.println(
+            "STATUS,WARN,OLED_INIT_FAILED");
+    }
+
     uint32_t startTime = millis();
-    while (!Serial) {
-        if (millis() - startTime > 30000) break; 
+
+    while (!Serial)
+    {
+        if (
+            millis() - startTime
+            > 30000
+        )
+        {
+            break;
+        }
+
         delay(10);
     }
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+    if (!initializeEspNow())
+    {
+        Serial.println(
+            "STATUS,ERROR,ESP_NOW_INIT_FAILED");
 
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("STATUS,ERROR,ESP_NOW_INIT_FAILED");
-        while (1) { delay(1000); } 
+        while (true)
+        {
+            delay(1000);
+        }
     }
 
-    esp_now_register_recv_cb(OnDataRecv);
-    esp_now_register_send_cb(OnDataSent);
-
-    esp_now_peer_info_t peerInfo;
-    memset(&peerInfo, 0, sizeof(peerInfo));
-    memcpy(peerInfo.peer_addr, broadcastAddress, 6); 
-    peerInfo.channel = 0;
-    peerInfo.encrypt = false;
-
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        Serial.println("STATUS,ERROR,PEER_ADD_FAILED");
-    } else {
-        Serial.println("STATUS,READY,GATEWAY_ACTIVE");
-    } 
+    Serial.println(
+        "STATUS,READY,GATEWAY_ACTIVE");
 }
 
-void loop() {
-    // --- 1. NON-BLOCKING DISPLAY REFRESH (1Hz) ---
+void loop()
+{
     static uint32_t lastDisplayUpdate = 0;
-    uint32_t currentMillis = millis();
-    
-    if (currentMillis - lastDisplayUpdate > 1000) {
-        uint8_t activeNodes = 0;
-        
-        // Sweep the matrix: Any node heard from in the last 15 seconds is "Online"
-        for (int i = 0; i < 256; i++) {
-            if (lastSeenMatrix[i] > 0 && (currentMillis - lastSeenMatrix[i] < 15000)) {
-                activeNodes++;
-            }
-        }
-        
-        bool isConnected = (activeNodes > 0);
-        gatewayUI.update(isConnected, activeNodes, gatewaySeqCount);
-        lastDisplayUpdate = currentMillis;
+
+    uint32_t now = millis();
+
+    if (
+        now - lastDisplayUpdate
+        >= 1000
+    )
+    {
+        activeNodeCount =
+            computeActiveNodes();
+
+        gatewayUI.update(
+            activeNodeCount > 0,
+            activeNodeCount,
+            packetsSent);
+
+        lastDisplayUpdate = now;
     }
 
-    // --- 2. COMMAND INGESTION FROM REACT DASHBOARD ---
-    if (Serial.available() > 0) {
-        String csvLine = Serial.readStringUntil('\n'); 
-        csvLine.trim(); 
+    if (Serial.available())
+    {
+        String line =
+            Serial.readStringUntil('\n');
 
-        if (csvLine.startsWith("CMD")) {
-            int index1 = csvLine.indexOf(',');
-            int index2 = csvLine.indexOf(',', index1 + 1); 
-            int index3 = csvLine.indexOf(',', index2 + 1);
-            int index4 = csvLine.indexOf(',', index3 + 1); 
+        line.trim();
 
-            if (index1 != -1 && index2 != -1 && index3 != -1 && index4 != -1) {
-                uint8_t targetID = (uint8_t)csvLine.substring(index1 + 1, index2).toInt();
-                uint8_t mode     = (uint8_t)csvLine.substring(index2 + 1, index3).toInt(); 
-                int16_t biasPan  = (int16_t)csvLine.substring(index3 + 1, index4).toInt();
-                int16_t biasTilt = (int16_t)csvLine.substring(index4 + 1).toInt(); 
+        if (!line.startsWith("CMD"))
+        {
+            return;
+        }
 
-                NetworkPacket outboundPacket;
-                outboundPacket.header.sourceID = 0x00; // 0x00 denotes Central Gateway Base Station Hub 
-                outboundPacket.header.packetType = PACKET_ML_OVERRIDE;
-                outboundPacket.header.sequenceNumber = gatewaySeqCount++; 
+        int i1 = line.indexOf(',');
+        int i2 = line.indexOf(',', i1 + 1);
+        int i3 = line.indexOf(',', i2 + 1);
+        int i4 = line.indexOf(',', i3 + 1);
 
-                // Pack Routed Addressing Footprint Variables
-                outboundPacket.payload.overrideCmd.targetID       = targetID;
-                outboundPacket.payload.overrideCmd.structuralMode = mode; 
-                outboundPacket.payload.overrideCmd.appliedBiasPan = biasPan;
-                outboundPacket.payload.overrideCmd.appliedBiasTilt = biasTilt;
+        if (
+            i1 < 0 ||
+            i2 < 0 ||
+            i3 < 0 ||
+            i4 < 0
+        )
+        {
+            return;
+        }
 
-                esp_err_t result = esp_now_send(broadcastAddress, (uint8_t*)&outboundPacket, sizeof(NetworkPacket));
-                if (result == ESP_OK) {
-                    Serial.printf("STATUS,TX_OK,%02X\n", targetID); 
-                } else {
-                    Serial.printf("STATUS,TX_FAIL,%02X\n", targetID);
-                } 
-            }
+        uint8_t targetID =
+            (uint8_t)
+            line.substring(
+                i1 + 1,
+                i2).toInt();
+
+        uint8_t mode =
+            (uint8_t)
+            line.substring(
+                i2 + 1,
+                i3).toInt();
+
+        int16_t biasPan =
+            (int16_t)
+            line.substring(
+                i3 + 1,
+                i4).toInt();
+
+        int16_t biasTilt =
+            (int16_t)
+            line.substring(
+                i4 + 1).toInt();
+
+        NetworkPacket packet = {};
+
+        packet.header.sourceID = 0x00;
+
+        packet.header.packetType =
+            PACKET_ML_OVERRIDE;
+
+        packet.header.sequenceNumber =
+            ++gatewaySeqCount;
+
+        packet.payload.overrideCmd.targetID =
+            targetID;
+
+        packet.payload.overrideCmd.structuralMode =
+            mode;
+
+        packet.payload.overrideCmd.appliedBiasPan =
+            biasPan;
+
+        packet.payload.overrideCmd.appliedBiasTilt =
+            biasTilt;
+
+        esp_err_t result =
+            esp_now_send(
+                broadcastAddress,
+                reinterpret_cast<uint8_t*>(
+                    &packet),
+                sizeof(packet));
+
+        if (result == ESP_OK)
+        {
+            packetsSent++;
+
+            Serial.printf(
+                "STATUS,TX_OK,%02X\n",
+                targetID);
+        }
+        else
+        {
+            Serial.printf(
+                "STATUS,TX_FAIL,%02X\n",
+                targetID);
         }
     }
 }
 
-void OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len) {
-    if (len == sizeof(NetworkPacket)) {
-        NetworkPacket packet;
-        memcpy(&packet, incomingData, sizeof(NetworkPacket)); 
-        
-        // Log the heartbeat for the active connection matrix
-        lastSeenMatrix[packet.header.sourceID] = millis();
+void OnDataRecv(
+    const esp_now_recv_info *recvInfo,
+    const uint8_t *incomingData,
+    int len)
+{
+    if (
+        len != sizeof(NetworkPacket)
+    )
+    {
+        packetsDropped++;
+        return;
+    }
 
-        if (packet.header.packetType == PACKET_TELEMETRY) {
-            Serial.printf("DATA,%02X,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d\n",
-                          packet.header.sourceID,
-                          packet.payload.telemetry.busVoltage,
-                          packet.payload.telemetry.currentmA,
-                          packet.payload.telemetry.temperature,
-                          packet.payload.telemetry.humidity,
-                          packet.payload.telemetry.pressure, 
-                          packet.payload.telemetry.panAngle,
-                          packet.payload.telemetry.tiltAngle);
-        } 
+    registerPeer(
+        recvInfo->src_addr);
+
+    NetworkPacket packet;
+
+    memcpy(
+        &packet,
+        incomingData,
+        sizeof(packet));
+
+    uint8_t source =
+        packet.header.sourceID;
+
+    if (
+        source == 0 ||
+        source == 255
+    )
+    {
+        packetsDropped++;
+        return;
+    }
+
+    if (
+        packet.header.sequenceNumber
+        <= lastSequenceSeen[source]
+    )
+    {
+        return;
+    }
+
+    lastSequenceSeen[source] =
+        packet.header.sequenceNumber;
+
+    lastSeenMatrix[source] =
+        millis();
+
+    packetsReceived++;
+
+    switch (
+        packet.header.packetType
+    )
+    {
+        case PACKET_TELEMETRY:
+        {
+            Serial.printf(
+                "DATA,%02X,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d\n",
+                source,
+                packet.payload.telemetry.busVoltage,
+                packet.payload.telemetry.currentmA,
+                packet.payload.telemetry.temperature,
+                packet.payload.telemetry.humidity,
+                packet.payload.telemetry.pressure,
+                packet.payload.telemetry.panAngle,
+                packet.payload.telemetry.tiltAngle);
+
+            break;
+        }
+
+        default:
+            break;
     }
 }
 
-// Fixed function definition signature matching esp_now_send_cb_t under IDF 5.1/Core v3
-void OnDataSent(const wifi_tx_info_t *txInfo, esp_now_send_status_t status) {
-    // If you ever need to inspect metadata in the future:
-    // txInfo->id contains the target MAC address properties
+void OnDataSent(
+    const wifi_tx_info_t *txInfo,
+    esp_now_send_status_t status)
+{
+    (void)txInfo;
+
+    if (
+        status
+        != ESP_NOW_SEND_SUCCESS
+    )
+    {
+        Serial.println(
+            "STATUS,WARN,SEND_FAILED");
+    }
 }
