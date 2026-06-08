@@ -38,6 +38,10 @@
 #define WSN_COMM_CHANNEL 1
 #endif
 
+static TrackerNetManager* instance;
+
+uint32_t lastSequenceSeen[256];
+
 class TrackerNetManager
 {
 public:
