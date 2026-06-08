@@ -75,3 +75,20 @@ namespace WSN
 
     static_assert(sizeof(NetworkHeader) == 7);
 }
+
+// ------------------------------------------------------------------
+// Backward compatibility aliases
+// ------------------------------------------------------------------
+
+using NetworkHeader      = WSN::NetworkHeader;
+using TelemetryPayload   = WSN::TelemetryPayload;
+using SyncPayload        = WSN::SyncPayload;
+using MLOverridePayload  = WSN::MLOverridePayload;
+using HeartbeatPayload   = WSN::HeartbeatPayload;
+using PacketPayload      = WSN::PacketPayload;
+using NetworkPacket      = WSN::NetworkPacket;
+
+static constexpr auto PACKET_TELEMETRY   = WSN::PACKET_TELEMETRY;
+static constexpr auto PACKET_ACTION_SYNC = WSN::PACKET_ACTION_SYNC;
+static constexpr auto PACKET_ML_OVERRIDE = WSN::PACKET_ML_OVERRIDE;
+static constexpr auto PACKET_HEARTBEAT   = WSN::PACKET_HEARTBEAT;
