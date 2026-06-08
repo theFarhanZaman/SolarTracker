@@ -42,10 +42,6 @@
 class TrackerNetManager
 {
 
-private:
-
-    uint32_t lastSequenceSeen[256] = {};
-
 public:
 
     static TrackerNetManager* instance;
