@@ -279,10 +279,13 @@ void TrackerNetManager::OnDataRecv(
 
 void TrackerNetManager::OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
-    uint8_t *mac = info->des_addr;  // destination MAC
+    const uint8_t* mac = info->des_addr;
 
-    Serial.print("ESP-NOW Send Status: ");
-    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+    Serial.print("[ESP-NOW] Send Status: ");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL");
+
+    // optional debug
+    // for (int i = 0; i < 6; i++) Serial.printf("%02X:", mac[i]);
 }
 {
 }
