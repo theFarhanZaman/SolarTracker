@@ -231,59 +231,49 @@ void TrackerNetManager::OnDataRecv(
     const uint8_t* data,
     int len)
 {
-    if (instance == nullptr)
-    {
+    if (!instance || !recvInfo || !data)
         return;
-    }
 
-    if (
-        len != sizeof(
-            WSN::NetworkPacket))
-    {
+    if (len != sizeof(WSN::NetworkPacket))
         return;
-    }
 
     WSN::NetworkPacket packet;
+    memcpy(&packet, data, sizeof(packet));
 
-    memcpy(
-        &packet,
-        data,
-        sizeof(packet));
-
-    if (
-        !instance->validatePacket(
-            packet))
-    {
+    if (!instance->validatePacket(packet))
         return;
-    }
 
-    if (
-        instance->isDuplicatePacket(
-            packet))
-    {
+    if (instance->isDuplicatePacket(packet))
         return;
-    }
 
     instance->packetsReceived++;
 
-    instance->registerPeer(
-        recvInfo->src_addr);
+    instance->registerPeer(recvInfo->src_addr);
 
-    instance->processIncomingPacket(
-        recvInfo->src_addr,
-        packet);
+    instance->processIncomingPacket(recvInfo->src_addr, packet);
 }
 
-
-void TrackerNetManager::OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
+void TrackerNetManager::OnDataSent(
+    const wifi_tx_info_t* info,
+    esp_now_send_status_t status)
 {
+    if (info == nullptr)
+        return;
+
     const uint8_t* mac = info->des_addr;
 
     Serial.print("[ESP-NOW] Send Status: ");
     Serial.println(status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL");
 
-    // optional debug
-    // for (int i = 0; i < 6; i++) Serial.printf("%02X:", mac[i]);
+    // Optional debug MAC print
+    /*
+    Serial.print("To: ");
+    for (int i = 0; i < 6; i++) {
+        Serial.printf("%02X", mac[i]);
+        if (i < 5) Serial.print(":");
+    }
+    Serial.println();
+    */
 }
 
 
