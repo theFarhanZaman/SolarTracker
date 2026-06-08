@@ -41,8 +41,7 @@ bool TrackerNetManager::begin()
     esp_now_register_recv_cb(
         TrackerNetManager::OnDataRecv);
 
-    esp_now_register_send_cb(
-        TrackerNetManager::OnDataSent);
+    esp_now_register_send_cb(TrackerNetManager::OnDataSent);
 
     uint64_t chipID =
         ESP.getEfuseMac();
