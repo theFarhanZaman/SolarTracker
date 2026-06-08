@@ -274,8 +274,6 @@ void TrackerNetManager::OnDataRecv(
         packet);
 }
 
-#include "esp_now.h"
-#include "esp_wifi.h"
 
 void TrackerNetManager::OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
