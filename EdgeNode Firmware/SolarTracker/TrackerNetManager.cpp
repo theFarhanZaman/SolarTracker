@@ -104,6 +104,9 @@ bool TrackerNetManager::sendTelemetry(
     packet.payload.telemetry =
         telemetry;
 
+    Serial.print("[NET] Packet size: ");
+    Serial.println(sizeof(WSN::NetworkPacket));
+
     return sendPacket(
         BROADCAST_MAC,
         packet);
