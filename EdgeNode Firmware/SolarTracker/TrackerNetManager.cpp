@@ -1,7 +1,8 @@
 #include "TrackerNetManager.h"
 
-// Initialize the static singleton pointer
 TrackerNetManager* TrackerNetManager::instance = nullptr;
+
+constexpr uint8_t TrackerNetManager::BROADCAST_MAC[6];
 
 TrackerNetManager::TrackerNetManager()
 {
@@ -13,97 +14,330 @@ TrackerNetManager::TrackerNetManager()
         sizeof(lastSequenceSeen));
 }
 
-bool TrackerNetManager::begin() {
-    // 1. Force strict Wi-Fi Station Mode (Disable AP mode to prevent RF noise)
+bool TrackerNetManager::begin()
+{
     WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
 
-    // 2. Hardware Channel Locking
-    // ESP-NOW requires nodes to be on the exact same RF channel. 
-    // This ESP-IDF call bypasses the Arduino abstraction to guarantee the channel lock.
+    WiFi.disconnect(true, true);
+
+    delay(100);
+
     esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(WSN_COMM_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+    esp_wifi_set_channel(
+        WSN_COMM_CHANNEL,
+        WIFI_SECOND_CHAN_NONE);
+
     esp_wifi_set_promiscuous(false);
 
-    // 3. Initialize the ESP-NOW protocol stack
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("[NET CRITICAL] ESP-NOW Core Stack Initialization Failed.");
+    if (esp_now_init() != ESP_OK)
+    {
+        Serial.println(
+            "[NET] ESP-NOW init failed");
+
         return false;
     }
 
-    // 4. Register the Receive Callback Hook
-    esp_now_register_recv_cb(OnDataRecv);
+    esp_now_register_recv_cb(
+        TrackerNetManager::OnDataRecv);
 
-    // 5. Generate a unique local Node ID from the hardware MAC address
-    // This prevents manual hardcoding when flashing 50+ different edge nodes.
-    uint8_t baseMac[6];
-    esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
-    localNodeID = baseMac[5]; // Use the last byte of the MAC as a quick unique identifier
+    esp_now_register_send_cb(
+        TrackerNetManager::OnDataSent);
 
-    // 6. THE FIX: Explicitly register the universal broadcast address as a trusted peer
-    if (!registerPeer(broadcastMac)) {
-        Serial.println("[NET CRITICAL] Hardware layer rejected broadcast peer registration.");
+    uint64_t chipID =
+        ESP.getEfuseMac();
+
+    localNodeID =
+        static_cast<uint8_t>(
+            chipID & 0xFF);
+
+    esp_now_peer_info_t peer = {};
+
+    memcpy(
+        peer.peer_addr,
+        BROADCAST_MAC,
+        6);
+
+    peer.channel =
+        WSN_COMM_CHANNEL;
+
+    peer.encrypt = false;
+
+    if (!esp_now_is_peer_exist(
+            BROADCAST_MAC))
+    {
+        esp_now_add_peer(&peer);
+    }
+
+    initialized = true;
+
+    return true;
+}
+
+bool TrackerNetManager::sendTelemetry(
+    const WSN::TelemetryPayload& telemetry)
+{
+    WSN::NetworkPacket packet = {};
+
+    packet.header.protocolVersion =
+        WSN::PROTOCOL_VERSION;
+
+    packet.header.sourceID =
+        localNodeID;
+
+    packet.header.packetType =
+        WSN::PACKET_TELEMETRY;
+
+    packet.header.sequenceNumber =
+        ++sequenceCounter;
+
+    packet.payload.telemetry =
+        telemetry;
+
+    return sendPacket(
+        BROADCAST_MAC,
+        packet);
+}
+
+bool TrackerNetManager::broadcastSync(
+    const WSN::SyncPayload& syncData)
+{
+    WSN::NetworkPacket packet = {};
+
+    packet.header.protocolVersion =
+        WSN::PROTOCOL_VERSION;
+
+    packet.header.sourceID =
+        localNodeID;
+
+    packet.header.packetType =
+        WSN::PACKET_ACTION_SYNC;
+
+    packet.header.sequenceNumber =
+        ++sequenceCounter;
+
+    packet.payload.syncData =
+        syncData;
+
+    return sendPacket(
+        BROADCAST_MAC,
+        packet);
+}
+
+bool TrackerNetManager::sendPacket(
+    const uint8_t* destinationMAC,
+    const WSN::NetworkPacket& packet)
+{
+    if (!initialized)
+    {
+        return false;
+    }
+
+    esp_err_t result =
+        esp_now_send(
+            destinationMAC,
+            reinterpret_cast<const uint8_t*>(&packet),
+            sizeof(packet));
+
+    if (result == ESP_OK)
+    {
+        packetsSent++;
+        return true;
+    }
+
+    packetsDropped++;
+
+    return false;
+}
+
+bool TrackerNetManager::registerPeer(
+    const uint8_t* macAddress)
+{
+    if (esp_now_is_peer_exist(
+            macAddress))
+    {
+        return true;
+    }
+
+    esp_now_peer_info_t peer = {};
+
+    memcpy(
+        peer.peer_addr,
+        macAddress,
+        6);
+
+    peer.channel =
+        WSN_COMM_CHANNEL;
+
+    peer.encrypt = false;
+
+    return (
+        esp_now_add_peer(&peer)
+        == ESP_OK);
+}
+
+bool TrackerNetManager::isPeerKnown(
+    const uint8_t* macAddress) const
+{
+    return esp_now_is_peer_exist(
+        macAddress);
+}
+
+bool TrackerNetManager::validatePacket(
+    const WSN::NetworkPacket& packet) const
+{
+    if (
+        packet.header.protocolVersion
+        != WSN::PROTOCOL_VERSION)
+    {
         return false;
     }
 
     return true;
 }
 
-bool TrackerNetManager::registerPeer(const uint8_t *mac_addr) {
-    // Check if the peer already exists in the hardware routing table
-    if (esp_now_is_peer_exist(mac_addr)) {
-        return true; 
+bool TrackerNetManager::isDuplicatePacket(
+    const WSN::NetworkPacket& packet)
+{
+    uint8_t source =
+        packet.header.sourceID;
+
+    uint32_t sequence =
+        packet.header.sequenceNumber;
+
+    if (
+        sequence <=
+        lastSequenceSeen[source])
+    {
+        return true;
     }
 
-    esp_now_peer_info_t peerInfo;
-    memset(&peerInfo, 0, sizeof(peerInfo)); // Zero out memory to prevent struct garbage
-    memcpy(peerInfo.peer_addr, mac_addr, 6);
-    
-    peerInfo.channel = WSN_COMM_CHANNEL; // Bind peer to the strict system channel
-    peerInfo.encrypt = false;            // ESP-NOW broadcasts cannot use payload encryption
+    lastSequenceSeen[source] =
+        sequence;
 
-    // Push the struct to the ESP-IDF driver
-    esp_err_t addStatus = esp_now_add_peer(&peerInfo);
-    return (addStatus == ESP_OK);
+    return false;
 }
 
-bool TrackerNetManager::broadcastSync(const SyncPayload &syncData) {
-    NetworkPacket packet;
-    
-    // Assemble the universal network header
-    packet.header.sourceID = localNodeID;
-    packet.header.packetType = PACKET_ACTION_SYNC;
-    packet.header.sequenceNumber = seqCounter++;
+uint8_t TrackerNetManager::generateNodeID() const
+{
+    uint64_t chipID =
+        ESP.getEfuseMac();
 
-    // Inject the specific sync payload
-    packet.payload.syncData = syncData;
-
-    // Fire the packet into the RF layer
-    esp_err_t result = esp_now_send(broadcastMac, (uint8_t *)&packet, sizeof(NetworkPacket));
-    
-    if (result != ESP_OK) {
-        Serial.printf("[NET WARNING] RF Hardware rejected TX buffer (Err: %d)\n", result);
-        return false;
-    }
-    
-    return true;
+    return static_cast<uint8_t>(
+        chipID & 0xFF);
 }
 
-void TrackerNetManager::OnDataRecv(const esp_now_recv_info *recvInfo, const uint8_t *incomingData, int len) {
-    // Safety check: Ensure the instance exists and the packet size matches our strict architecture
-    if (instance == nullptr || len != sizeof(NetworkPacket)) {
-        return; 
+void TrackerNetManager::OnDataRecv(
+    const esp_now_recv_info_t* recvInfo,
+    const uint8_t* data,
+    int len)
+{
+    if (instance == nullptr)
+    {
+        return;
     }
 
-    NetworkPacket packet;
-    memcpy(&packet, incomingData, sizeof(NetworkPacket));
-
-    // Dynamic Peer Learning: If we hear from a new MAC, add it to our routing table automatically
-    instance->registerPeer(recvInfo->src_addr);
-
-    // Route the packet based on its signature
-    if (packet.header.packetType == PACKET_ACTION_SYNC) {
-        instance->latestSyncCommand = packet.payload.syncData;
-        instance->hasPendingSync = true;
+    if (
+        len != sizeof(
+            WSN::NetworkPacket))
+    {
+        return;
     }
+
+    WSN::NetworkPacket packet;
+
+    memcpy(
+        &packet,
+        data,
+        sizeof(packet));
+
+    if (
+        !instance->validatePacket(
+            packet))
+    {
+        return;
+    }
+
+    if (
+        instance->isDuplicatePacket(
+            packet))
+    {
+        return;
+    }
+
+    instance->packetsReceived++;
+
+    instance->registerPeer(
+        recvInfo->src_addr);
+
+    instance->processIncomingPacket(
+        recvInfo->src_addr,
+        packet);
+}
+
+void TrackerNetManager::OnDataSent(
+    const uint8_t*,
+    esp_now_send_status_t)
+{
+}
+
+void TrackerNetManager::processIncomingPacket(
+    const uint8_t*,
+    const WSN::NetworkPacket& packet)
+{
+    switch (
+        packet.header.packetType)
+    {
+        case WSN::PACKET_ACTION_SYNC:
+
+            latestSyncCommand =
+                packet.payload.syncData;
+
+            hasPendingSync = true;
+
+            break;
+
+        case WSN::PACKET_ML_OVERRIDE:
+
+            latestMLOverride =
+                packet.payload.overrideCmd;
+
+            hasPendingMLOverride =
+                true;
+
+            break;
+
+        default:
+            break;
+    }
+}
+
+void TrackerNetManager::handleTelemetryPacket(
+    const WSN::NetworkPacket&)
+{
+}
+
+void TrackerNetManager::handleSyncPacket(
+    const WSN::NetworkPacket&)
+{
+}
+
+void TrackerNetManager::handleMLOverridePacket(
+    const WSN::NetworkPacket&)
+{
+}
+
+void TrackerNetManager::handleHeartbeatPacket(
+    const WSN::NetworkPacket&)
+{
+}
+
+void TrackerNetManager::logPacketReceived(
+    const WSN::NetworkPacket&)
+{
+}
+
+void TrackerNetManager::logPacketDropped(
+    const char*)
+{
 }
