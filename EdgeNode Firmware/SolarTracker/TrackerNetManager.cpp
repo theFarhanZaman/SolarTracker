@@ -285,8 +285,7 @@ void TrackerNetManager::OnDataSent(const wifi_tx_info_t *info, esp_now_send_stat
     // optional debug
     // for (int i = 0; i < 6; i++) Serial.printf("%02X:", mac[i]);
 }
-{
-}
+
 
 void TrackerNetManager::processIncomingPacket(
     const uint8_t*,
