@@ -206,9 +206,7 @@ private:
         const uint8_t* data,
         int len);
 
-    static void OnDataSent(
-        const uint8_t* macAddr,
-        esp_now_send_status_t status);
+    static void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status);
 
     //---------------------------------------------------------------------
     // Packet Routing
