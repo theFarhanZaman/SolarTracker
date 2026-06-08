@@ -3,8 +3,14 @@
 // Initialize the static singleton pointer
 TrackerNetManager* TrackerNetManager::instance = nullptr;
 
-TrackerNetManager::TrackerNetManager() : localNodeID(0), seqCounter(0), hasPendingSync(false) {
+TrackerNetManager::TrackerNetManager()
+{
     instance = this;
+
+    memset(
+        lastSequenceSeen,
+        0,
+        sizeof(lastSequenceSeen));
 }
 
 bool TrackerNetManager::begin() {
