@@ -65,8 +65,19 @@ bool TrackerNetManager::begin()
     if (!esp_now_is_peer_exist(
             BROADCAST_MAC))
     {
-        esp_now_add_peer(&peer);
+        esp_err_t err = esp_now_add_peer(&peer);
+
+        if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST)
+    {
+        Serial.print("[NET] Broadcast peer FAIL: ");
+        Serial.println(err);
     }
+        else
+   {
+    Serial.println("[NET] Broadcast peer ready");
+   }
+        
+   }
 
     initialized = true;
 
@@ -129,24 +140,30 @@ bool TrackerNetManager::sendPacket(
 {
     if (!initialized)
     {
+        Serial.println("[NET] Not initialized");
         return false;
     }
 
-    esp_err_t result =
-        esp_now_send(
-            destinationMAC,
-            reinterpret_cast<const uint8_t*>(&packet),
-            sizeof(packet));
+    esp_err_t result = esp_now_send(
+        destinationMAC,
+        reinterpret_cast<const uint8_t*>(&packet),
+        sizeof(packet));
 
-    if (result == ESP_OK)
+    if (result != ESP_OK)
     {
-        packetsSent++;
-        return true;
+        Serial.print("[NET] esp_now_send FAILED: ");
+        Serial.println(result);
+
+        packetsDropped++;
+        return false;
     }
 
-    packetsDropped++;
+    packetsSent++;
 
-    return false;
+    Serial.print("[NET] TX OK | Total: ");
+    Serial.println(packetsSent);
+
+    return true;
 }
 
 bool TrackerNetManager::registerPeer(
