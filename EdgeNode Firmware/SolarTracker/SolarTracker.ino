@@ -105,6 +105,20 @@ void setup()
 
 void loop() 
 {
+
+    static uint32_t lastHeartbeat = 0;
+
+if (millis() - lastHeartbeat > 1000)
+{
+    lastHeartbeat = millis();
+
+    Serial.printf(
+        "[HEARTBEAT] Uptime=%lu Heap=%u\n",
+        millis(),
+        ESP.getFreeHeap()
+    );
+}
+    
     // Persistent state counter across loop executions (Scoping Bug Fix)
     static uint32_t localNodeSequenceNum = 0;
 
