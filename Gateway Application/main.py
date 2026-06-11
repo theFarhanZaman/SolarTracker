@@ -21,7 +21,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
 # --- HARDWARE & DATA CONFIGURATION ---
-BAUD_RATE = 921600
+BAUD_RATE = 115200
 ESP32S3_VID = 0x303A
 ESP32S3_PID = 0x1001
 DATA_FILE = "wsn_telemetry_history.csv"
@@ -143,6 +143,12 @@ def hardware_serial_worker(hub: WSNIntelligenceHub):
     """Monitors, reads telemetry from, and writes structured commands to the physical central gateway."""
     while True:
         ports = serial.tools.list_ports.comports()
+        for p in ports:
+         print(
+         f"PORT={p.device} "
+         f"VID={p.vid} "
+         f"PID={p.pid}"
+         )
         target_port = next((p.device for p in ports if p.vid == ESP32S3_VID and p.pid == ESP32S3_PID), None)
 
         if target_port:
