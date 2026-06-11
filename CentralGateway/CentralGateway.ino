@@ -11,7 +11,7 @@
 #define I2C_SCL_PIN 8
 
 #define WSN_COMM_CHANNEL 1
-#define NODE_TIMEOUT_MS 15000
+#define NODE_TIMEOUT_MS 60000
 
 GatewayDisplayManager gatewayUI;
 
@@ -133,7 +133,7 @@ static uint8_t computeActiveNodes()
 
 void setup()
 {
-    Serial.begin(921600);
+    Serial.begin(115200);
 
     Wire.begin(
         I2C_SDA_PIN,
@@ -151,7 +151,7 @@ void setup()
     {
         if (
             millis() - startTime
-            > 30000
+            > 60000
         )
         {
             break;
@@ -319,6 +319,13 @@ void OnDataRecv(
     uint8_t source =
         packet.header.sourceID;
 
+    Serial.printf(
+    "RX: Node=%u Seq=%lu Last=%lu\n",
+    source,
+    packet.header.sequenceNumber,
+    lastSequenceSeen[source]
+);
+
     if (
         source == 0 ||
         source == 255
@@ -328,13 +335,16 @@ void OnDataRecv(
         return;
     }
 
-    if (
-        packet.header.sequenceNumber
-        <= lastSequenceSeen[source]
-    )
-    {
-        return;
-    }
+    if (packet.header.sequenceNumber <= lastSequenceSeen[source])
+{
+    Serial.printf(
+        "DROP_SEQ Node=%u Seq=%lu Last=%lu\n",
+        source,
+        packet.header.sequenceNumber,
+        lastSequenceSeen[source]
+    );
+    return;
+}
 
     lastSequenceSeen[source] =
         packet.header.sequenceNumber;
