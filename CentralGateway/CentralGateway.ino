@@ -305,6 +305,7 @@ void OnDataRecv(
         packetsDropped++;
         return;
     }
+    
 
     registerPeer(
         recvInfo->src_addr);
@@ -325,7 +326,14 @@ void OnDataRecv(
     packet.header.sequenceNumber,
     lastSequenceSeen[source]
 );
-
+    if (source >= MAX_NODES)
+{
+    Serial.printf(
+        "Node ID %u exceeds table size\n",
+        source
+    );
+    return;
+}
     if (
         source == 0 ||
         source == 255
